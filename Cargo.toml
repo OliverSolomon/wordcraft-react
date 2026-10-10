@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/wordcraft-embed"]
+members = ["crates/wordcraft-embed", "crates/wordcraft-collab"]
+# Upstream WordCraft is checked out (and patched) here by scripts/prepare-upstream.sh.
+exclude = ["upstream"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,12 +10,12 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.90"
 
-# Upstream WordCraft, pinned to one commit so every build of the package ships the exact same
-# editor. Bump with scripts/bump-upstream.sh, which rewrites all three revs and UPSTREAM_REV.
+# Upstream WordCraft, pinned to the commit in UPSTREAM_REV and patched with patches/*.patch by
+# scripts/prepare-upstream.sh (run it before building). scripts/sync-upstream.py moves the pin.
 [workspace.dependencies]
-wordcraft-engine = { git = "https://github.com/storytold/wordcraft", rev = "004286e4b73adce50c0dea1847bf297625922729" }
-wordcraft-ui-egui = { git = "https://github.com/storytold/wordcraft", rev = "004286e4b73adce50c0dea1847bf297625922729" }
-wordcraft-doc = { git = "https://github.com/storytold/wordcraft", rev = "004286e4b73adce50c0dea1847bf297625922729" }
+wordcraft-engine = { path = "upstream/crates/engine" }
+wordcraft-ui-egui = { path = "upstream/crates/ui-egui" }
+wordcraft-doc = { path = "upstream/crates/doc" }
 
 [profile.release]
 opt-level = 3

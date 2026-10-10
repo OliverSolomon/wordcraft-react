@@ -75,7 +75,7 @@ jobs:
           if [ "$MODE" = pr ]; then
             branch="upstream/$short"
             git switch -c "$branch"
-            git add -A Cargo.toml Cargo.lock UPSTREAM_REV crates
+            git add -A Cargo.toml Cargo.lock UPSTREAM_REV crates patches
             git commit -m "Sync upstream WordCraft to $short" -m "Upstream changes: $log"
             git push -f origin "$branch"
             gh pr view "$branch" >/dev/null 2>&1 || gh pr create --head "$branch" --title "Sync upstream WordCraft to $short" \
@@ -85,7 +85,7 @@ jobs:
           cd packages/wordcraft-react
           v=$(npm version patch --no-git-tag-version | tr -d v)
           cd ../..
-          git add -A Cargo.toml Cargo.lock UPSTREAM_REV crates packages/wordcraft-react/package.json packages/wordcraft-react/package-lock.json
+          git add -A Cargo.toml Cargo.lock UPSTREAM_REV crates patches packages/wordcraft-react/package.json packages/wordcraft-react/package-lock.json
           git commit -m "Release $v: sync upstream WordCraft to $short" -m "Upstream changes: $log"
           git tag "v$v"
           git push origin HEAD:main "v$v"
@@ -99,7 +99,7 @@ jobs:
         run: |
           title="Upstream WordCraft ${NEW:0:7} fails the build"
           if ! gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number' | grep -q .; then
-            gh issue create --title "$title" --body "The daily upstream sync could not build or verify storytold/wordcraft@$NEW. Nothing was published; npm still serves the previous version. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            gh issue create --title "$title" --body "The daily upstream sync could not build or verify storytold/wordcraft@$NEW (or a patch in patches/ no longer applies to it). Nothing was published; npm still serves the previous version. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           fi
 
   release:

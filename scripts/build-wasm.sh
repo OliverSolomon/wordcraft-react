@@ -20,6 +20,7 @@ if [ "$want" != "$have" ]; then
 fi
 
 cd "$ROOT"
+scripts/prepare-upstream.sh
 cargo build --locked --profile "$PROFILE" --target wasm32-unknown-unknown -p wordcraft-embed
 dir=$([ "$PROFILE" = dev ] && echo debug || echo release)
 rm -rf "$OUT" && mkdir -p "$OUT"

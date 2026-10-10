@@ -4,7 +4,8 @@
 Usage: scripts/sync-upstream.py [<commit sha>]     (default: latest storytold/wordcraft main)
 
 What it does:
-  1. Rewrites the pinned rev in Cargo.toml and UPSTREAM_REV.
+  1. Writes the new commit to UPSTREAM_REV and re-applies patches/*.patch onto it
+     (scripts/prepare-upstream.sh); exits non-zero if a patch no longer applies.
   2. Copies upstream's Cargo.lock, so every shared crate (egui, wgpu, skrifa, ...) resolves to
      exactly the version upstream ships, then lets cargo add only our own entries.
   3. Re-pins egui / eframe / rfd / wasm-bindgen in crates/wordcraft-embed to upstream's versions.
@@ -64,10 +65,15 @@ def main() -> int:
         up_toml = run("git", "-C", tmp, "show", "FETCH_HEAD:Cargo.toml", capture=True)
         up_lock = run("git", "-C", tmp, "show", "FETCH_HEAD:Cargo.lock", capture=True) + "\n"
 
-    # 1. the pinned rev
-    cargo = ROOT / "Cargo.toml"
-    cargo.write_text(cargo.read_text().replace(old, new))
+    # 1. the pinned rev, with our embedding patches applied on top
     (ROOT / "UPSTREAM_REV").write_text(new + "\n")
+    try:
+        run(str(ROOT / "scripts/prepare-upstream.sh"), cwd=ROOT)
+    except subprocess.CalledProcessError:
+        (ROOT / "UPSTREAM_REV").write_text(old + "\n")
+        print(f"error: patches/ no longer apply to upstream {new}", file=sys.stderr)
+        output(changed="true", old=old, new=new)
+        return 1
 
     # 3. dependency pins in the embed crate follow upstream
     embed = EMBED.read_text()

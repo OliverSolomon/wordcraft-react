@@ -1,0 +1,88 @@
+From 9f5dad050a492a5150698e4cd5bda7e21102eecd Mon Sep 17 00:00:00 2001
+From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 19:14:20 +0300
+Subject: [PATCH] Embedding hooks: web AutoSave through the host, hideable
+ title bar and ribbon
+
+- WordApp::set_autosave_target lets a host that keeps documents itself (a web
+  page) turn on AutoSave; on the web each AutoSave goes through
+  Services::download like File > Save.
+- UiState::hide_title_bar and hide_ribbon hide the title bar and the whole
+  ribbon (Word's Auto-hide Ribbon) for pages that embed WordCraft.
+---
+ crates/ui-egui/src/lib.rs | 30 +++++++++++++++++++++++++++---
+ 1 file changed, 27 insertions(+), 3 deletions(-)
+
+diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
+index f882858..3b7bd91 100644
+--- a/crates/ui-egui/src/lib.rs
++++ b/crates/ui-egui/src/lib.rs
+@@ -85,6 +85,10 @@ pub struct UiState {
+     pub window: Option<window_geometry::WindowGeometry>,
+     /// Interface language: `auto` (follow the system) or a code from [`i18n::LANGUAGES`].
+     pub language: String,
++    /// Embedded: hide the title bar (AutoSave, Quick Access Toolbar, title, search, account).
++    pub hide_title_bar: bool,
++    /// Embedded: hide the ribbon including its tab row (Word's "Auto-hide Ribbon").
++    pub hide_ribbon: bool,
+     /// Editing preferences; the session owns them while running (see [`WordApp::prefs`]).
+     pub editing: wordcraft_engine::Prefs,
+     /// Read Aloud speed (1 = normal) and whether it skips citations and bibliographies.
+@@ -111,6 +115,8 @@ impl Default for UiState {
+             author: String::new(),
+             window: None,
+             language: i18n::AUTO.into(),
++            hide_title_bar: false,
++            hide_ribbon: false,
+             editing: wordcraft_engine::Prefs::default(),
+             read_aloud_rate: 1.0,
+             read_aloud_skip_citations: true,
+@@ -677,6 +683,14 @@ impl WordApp {
+         self.session.path.is_some() && self.session.path == self.autosave_path
+     }
+ 
++    /// Let AutoSave write to `path`, as if the user had saved there in this session (`None` stops
++    /// it). For hosts that keep documents themselves, such as a web page embedding WordCraft: on
++    /// the web AutoSave then hands each save to `Services::download`.
++    pub fn set_autosave_target(&mut self, path: Option<std::path::PathBuf>) {
++        self.session.path = path.clone();
++        self.autosave_path = path;
++    }
++
+     /// Whether AutoSave covers the document (only a file the user saved to in this session).
+     pub fn autosaves(&self) -> bool {
+         self.autosave && self.saved_here()
+@@ -687,8 +701,14 @@ impl WordApp {
+     fn autosave_tick(&mut self, now: f64) {
+         if self.autosaves() && self.session.dirty && now - self.last_autosave > 2500.0 && now - self.canvas.caret_visible_since > 1500.0 {
+             self.last_autosave = now;
++            // On the web a save goes to the host (`Services::download`), as File › Save does there.
++            let web = self.services.download.is_some();
+             if self.session.path.as_deref().is_some_and(|p| keeps_everything(&p.to_string_lossy()))
+-                && let Err(e) = self.session.run("file.save", &json!({}))
++                && let Err(e) = if web {
++                    self.execute("file.save", json!({})).map(|_| json!({}))
++                } else {
++                    self.session.run("file.save", &json!({})).map_err(|e| e.to_string())
++                }
+             {
+                 log::warn!("AutoSave failed: {e}");
+                 self.autosave_path = None;
+@@ -731,8 +751,12 @@ impl WordApp {
+         if self.ui.backstage {
+             backstage::show(self, ui);
+         } else {
+-            chrome::title_bar(self, ui);
+-            ribbon::show(self, ui);
++            if !self.ui.hide_title_bar {
++                chrome::title_bar(self, ui);
++            }
++            if !self.ui.hide_ribbon {
++                ribbon::show(self, ui);
++            }
+             chrome::status_bar(self, ui);
+             panes::show(self, ui);
+             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
+-- 
+2.43.0
+

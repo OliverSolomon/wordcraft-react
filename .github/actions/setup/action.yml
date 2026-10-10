@@ -7,6 +7,9 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Upstream WordCraft at the pinned commit, with patches/ applied
+      shell: bash
+      run: scripts/prepare-upstream.sh
     - uses: dtolnay/rust-toolchain@stable
       with:
         targets: wasm32-unknown-unknown

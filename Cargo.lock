@@ -213,6 +213,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c049c0be4daef0b145cb3555416b3b8ef5b7888a38aea1a3a155801fe7b0810b"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -765,6 +774,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
+name = "dashmap"
+version = "6.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6361d5c062261c78a176addb82d4c821ae42bed6089de0e12603cd25de2059c"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "derive_arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1055,6 +1078,9 @@ name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
+dependencies = [
+ "getrandom 0.4.3",
+]
 
 [[package]]
 name = "fax"
@@ -1250,8 +1276,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1388,6 +1416,12 @@ dependencies = [
  "read-fonts 0.43.3",
  "smallvec",
 ]
+
+[[package]]
+name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "hashbrown"
@@ -2992,6 +3026,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "smallstr"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "862077b1e764f04c251fe82a2ef562fd78d7cadaeb072ca7c2bcaf7217b1ff3b"
+dependencies = [
+ "smallvec",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4277,9 +4320,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
+name = "wordcraft-collab"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "wordcraft-doc",
+ "wordcraft-engine",
+ "yrs",
+]
+
+[[package]]
 name = "wordcraft-doc"
 version = "0.4.0"
-source = "git+https://github.com/storytold/wordcraft?rev=004286e4b73adce50c0dea1847bf297625922729#004286e4b73adce50c0dea1847bf297625922729"
 dependencies = [
  "serde",
  "serde_json",
@@ -4291,7 +4345,6 @@ dependencies = [
 [[package]]
 name = "wordcraft-docbin"
 version = "0.4.0"
-source = "git+https://github.com/storytold/wordcraft?rev=004286e4b73adce50c0dea1847bf297625922729#004286e4b73adce50c0dea1847bf297625922729"
 dependencies = [
  "cfb",
  "log",
@@ -4303,7 +4356,6 @@ dependencies = [
 [[package]]
 name = "wordcraft-docx"
 version = "0.4.0"
-source = "git+https://github.com/storytold/wordcraft?rev=004286e4b73adce50c0dea1847bf297625922729#004286e4b73adce50c0dea1847bf297625922729"
 dependencies = [
  "log",
  "quick-xml 0.38.4",
@@ -4334,7 +4386,6 @@ dependencies = [
 [[package]]
 name = "wordcraft-engine"
 version = "0.4.0"
-source = "git+https://github.com/storytold/wordcraft?rev=004286e4b73adce50c0dea1847bf297625922729#004286e4b73adce50c0dea1847bf297625922729"
 dependencies = [
  "image",
  "js-sys",
@@ -4359,7 +4410,6 @@ dependencies = [
 [[package]]
 name = "wordcraft-fonts"
 version = "0.4.0"
-source = "git+https://github.com/storytold/wordcraft?rev=004286e4b73adce50c0dea1847bf297625922729#004286e4b73adce50c0dea1847bf297625922729"
 dependencies = [
  "harfrust 0.13.3",
  "kurbo",
@@ -4371,7 +4421,6 @@ dependencies = [
 [[package]]
 name = "wordcraft-formats"
 version = "0.4.0"
-source = "git+https://github.com/storytold/wordcraft?rev=004286e4b73adce50c0dea1847bf297625922729#004286e4b73adce50c0dea1847bf297625922729"
 dependencies = [
  "image",
  "log",
@@ -4384,7 +4433,6 @@ dependencies = [
 [[package]]
 name = "wordcraft-geom"
 version = "0.4.0"
-source = "git+https://github.com/storytold/wordcraft?rev=004286e4b73adce50c0dea1847bf297625922729#004286e4b73adce50c0dea1847bf297625922729"
 dependencies = [
  "serde",
 ]
@@ -4392,7 +4440,6 @@ dependencies = [
 [[package]]
 name = "wordcraft-layout"
 version = "0.4.0"
-source = "git+https://github.com/storytold/wordcraft?rev=004286e4b73adce50c0dea1847bf297625922729#004286e4b73adce50c0dea1847bf297625922729"
 dependencies = [
  "log",
  "serde",
@@ -4409,7 +4456,6 @@ dependencies = [
 [[package]]
 name = "wordcraft-pdf"
 version = "0.4.0"
-source = "git+https://github.com/storytold/wordcraft?rev=004286e4b73adce50c0dea1847bf297625922729#004286e4b73adce50c0dea1847bf297625922729"
 dependencies = [
  "image",
  "krilla",
@@ -4425,7 +4471,6 @@ dependencies = [
 [[package]]
 name = "wordcraft-proof"
 version = "0.4.0"
-source = "git+https://github.com/storytold/wordcraft?rev=004286e4b73adce50c0dea1847bf297625922729#004286e4b73adce50c0dea1847bf297625922729"
 dependencies = [
  "log",
  "miniz_oxide 0.8.9",
@@ -4434,7 +4479,6 @@ dependencies = [
 [[package]]
 name = "wordcraft-render"
 version = "0.4.0"
-source = "git+https://github.com/storytold/wordcraft?rev=004286e4b73adce50c0dea1847bf297625922729#004286e4b73adce50c0dea1847bf297625922729"
 dependencies = [
  "image",
  "log",
@@ -4448,7 +4492,6 @@ dependencies = [
 [[package]]
 name = "wordcraft-ui-egui"
 version = "0.4.0"
-source = "git+https://github.com/storytold/wordcraft?rev=004286e4b73adce50c0dea1847bf297625922729#004286e4b73adce50c0dea1847bf297625922729"
 dependencies = [
  "egui",
  "log",
@@ -4468,7 +4511,6 @@ dependencies = [
 [[package]]
 name = "wordcraft-zotero"
 version = "0.4.0"
-source = "git+https://github.com/storytold/wordcraft?rev=004286e4b73adce50c0dea1847bf297625922729#004286e4b73adce50c0dea1847bf297625922729"
 dependencies = [
  "log",
  "serde_json",
@@ -4581,6 +4623,24 @@ dependencies = [
  "quote",
  "syn 3.0.6",
  "synstructure",
+]
+
+[[package]]
+name = "yrs"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52c70dc8beca8666c77612a96889106ca3cd65318609721f464624ff79685da9"
+dependencies = [
+ "arc-swap",
+ "async-lock",
+ "async-trait",
+ "dashmap",
+ "fastrand",
+ "serde",
+ "serde_json",
+ "smallstr",
+ "smallvec",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
