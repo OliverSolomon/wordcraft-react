@@ -1,0 +1,79 @@
+// Browser smoke test: drives the example app in headless Chromium (WebGL2 through SwiftShader)
+// and checks that WordCraft starts and that the embedding API works end to end.
+//
+// Usage: npm run build && npm start &  then  node smoke-test.mjs [http://localhost:3000]
+// Writes smoke-*.png screenshots next to this file. Exits non-zero on any failure.
+import { chromium } from 'playwright';
+import assert from 'node:assert/strict';
+
+const url = process.argv[2] ?? 'http://localhost:3000/';
+const browser = await chromium.launch({
+  executablePath: process.env.CHROMIUM_PATH || undefined,
+  args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
+});
+const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+const logs = [];
+page.on('console', (m) => logs.push(`[${m.type()}] ${m.text()}`));
+page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
+page.on('response', (r) => r.status() >= 400 && logs.push(`[http ${r.status()}] ${r.url()}`));
+
+let failed = false;
+try {
+  await page.goto(url, { waitUntil: 'load' });
+  await page.waitForFunction(() => !!window.wordcraft, null, { timeout: 180_000 });
+  await page.waitForTimeout(3000);
+  await page.screenshot({ path: 'smoke-1-start.png' });
+
+  const r = await page.evaluate(async () => {
+    const ed = window.wordcraft;
+    const out = { commands: ed.commands().length, title: ed.title(), text: ed.getText().length };
+    ed.execute('text.insert', { text: 'SMOKE-MARKER ' });
+    out.dirty = ed.isDirty();
+    const docx = ed.export('docx');
+    out.docx = docx.byteLength;
+    out.pdf = ed.export('pdf').byteLength;
+    out.html = ed.getHTML().includes('SMOKE-MARKER');
+    out.md = ed.getMarkdown().includes('SMOKE-MARKER');
+    ed.newDocument();
+    out.blank = ed.getText().trim().length;
+    await ed.load({ name: 'roundtrip.docx', data: docx });
+    out.roundtrip = ed.getText().includes('SMOKE-MARKER');
+    ed.setPrefs({ tab: 'Insert' });
+    out.tab = ed.getPrefs().tab;
+    try {
+      ed.execute('no.such.command');
+      out.badCommandThrows = false;
+    } catch {
+      out.badCommandThrows = true;
+    }
+    return out;
+  });
+  console.log(JSON.stringify(r));
+  assert.ok(r.commands > 100, 'command registry is populated');
+  assert.ok(r.text > 0, 'sample document loaded');
+  assert.equal(r.dirty, true, 'edits mark the document dirty');
+  assert.ok(r.docx > 1000 && r.pdf > 1000, 'docx and pdf export');
+  assert.ok(r.html && r.md, 'html and markdown export');
+  assert.equal(r.blank, 0, 'newDocument clears the document');
+  assert.ok(r.roundtrip, 'docx round trip keeps the text');
+  assert.equal(r.tab, 'Insert', 'prefs apply');
+  assert.ok(r.badCommandThrows, 'unknown commands throw');
+
+  // Keyboard typing and Ctrl+S reaching the host's onSave.
+  await page.mouse.click(700, 500);
+  await page.keyboard.type('Typed. ');
+  await page.waitForTimeout(500);
+  assert.ok(await page.evaluate(() => window.wordcraft.getText().includes('Typed.')), 'keyboard typing reaches the editor');
+  await page.keyboard.press('Control+S');
+  await page.waitForFunction(() => document.body.innerText.includes('last save:'), null, { timeout: 15_000 });
+  await page.screenshot({ path: 'smoke-2-after.png' });
+  console.log('smoke test passed');
+} catch (e) {
+  failed = true;
+  console.error('smoke test FAILED:', e.message);
+  await page.screenshot({ path: 'smoke-failure.png' }).catch(() => {});
+  console.error(logs.slice(-40).join('\n'));
+} finally {
+  await browser.close();
+}
+process.exit(failed ? 1 : 0);

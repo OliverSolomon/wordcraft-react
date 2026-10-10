@@ -1,0 +1,35 @@
+name: Set up toolchains
+description: Rust (wasm32), wasm-bindgen-cli matching Cargo.lock, binaryen, Node 22 and Playwright's Chromium.
+inputs:
+  playwright:
+    description: Install Chromium for the browser smoke test
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+        components: clippy, rustfmt
+    - uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        registry-url: https://registry.npmjs.org
+    - name: wasm-bindgen-cli (version from Cargo.lock) and binaryen
+      shell: bash
+      run: |
+        WBG=$(grep -A1 'name = "wasm-bindgen"$' Cargo.lock | sed -n 's/version = "\(.*\)"/\1/p')
+        if [ "$(wasm-bindgen --version 2>/dev/null | awk '{print $2}')" != "$WBG" ]; then
+          cargo install wasm-bindgen-cli --version "$WBG" --locked --force
+        fi
+        npm i -g binaryen
+    - name: Playwright Chromium
+      if: inputs.playwright == 'true'
+      shell: bash
+      working-directory: examples/nextjs
+      run: |
+        npm install --no-audit --no-fund
+        npx playwright install --with-deps chromium

@@ -1,53 +1,73 @@
-# Publish @gamine/wordcraft-react to npm when a tag like v0.1.0 is pushed.
-# Needs the repository secret NPM_TOKEN (an npm automation token with publish rights on @gamine).
+# Publish @gamine/wordcraft-react to npm.
+#
+# Runs on a pushed v* tag, by hand (Actions > Release > Run workflow, on a tag), or when the
+# upstream sync workflow calls it after tagging a new version. It verifies the exact tagged source
+# (including the browser smoke test) before publishing, and skips versions already on npm.
+#
+# Auth: an NPM_TOKEN secret (granular token with publish rights on @gamine), or npm trusted
+# publishing for this repository and workflow (then no secret is needed).
 name: Release
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Tag to release, e.g. v0.1.1
+        type: string
+        required: true
+    secrets:
+      NPM_TOKEN:
+        required: false
 
 permissions:
   contents: write
-  id-token: write # npm provenance
+  id-token: write
+
+concurrency:
+  group: release-${{ inputs.ref || github.ref }}
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     environment: npm
+    env:
+      REF: ${{ inputs.ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
-      - name: Install wasm-bindgen-cli and binaryen
-        run: |
-          WBG=$(grep -A1 'name = "wasm-bindgen"$' Cargo.lock | sed -n 's/version = "\(.*\)"/\1/p')
-          cargo install wasm-bindgen-cli --version "$WBG" --locked
-          npm i -g binaryen
-      - name: Check the tag matches package.json
-        if: startsWith(github.ref, 'refs/tags/v')
+          ref: ${{ inputs.ref || github.ref }}
+      - name: Version must match the tag
         run: |
           v=$(node -p "require('./packages/wordcraft-react/package.json').version")
-          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != package version $v"; exit 1; }
-      - run: scripts/build-wasm.sh
-      - name: Build and publish
+          case "$REF" in v*) ;; *) echo "::error::Release runs on a v* tag, got $REF"; exit 1;; esac
+          [ "v$v" = "$REF" ] || { echo "::error::tag $REF != package version $v"; exit 1; }
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - name: Already published?
+        id: npm
+        run: |
+          if npm view "@gamine/wordcraft-react@$VERSION" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"; echo "::notice::$VERSION is already on npm; skipping publish"
+          fi
+      - uses: ./.github/actions/setup
+        if: steps.npm.outputs.already != 'true'
+      - uses: ./.github/actions/verify
+        if: steps.npm.outputs.already != 'true'
+      - name: Publish to npm
+        if: steps.npm.outputs.already != 'true'
         working-directory: packages/wordcraft-react
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          npm install --no-audit --no-fund
-          npm run build
-          npm test
+          npm i -g npm@11   # trusted publishing needs npm >= 11.5
           npm publish --access public --provenance
       - name: GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.npm.outputs.already != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        run: |
+          gh release view "$REF" >/dev/null 2>&1 || gh release create "$REF" --verify-tag --generate-notes \
+            --notes "Upstream WordCraft: storytold/wordcraft@$(cat UPSTREAM_REV)"

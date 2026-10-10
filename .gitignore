@@ -6,3 +6,4 @@ examples/*/.next/
 examples/*/out/
 *.tsbuildinfo
 .DS_Store
+examples/*/smoke-*.png

@@ -1,0 +1,111 @@
+# Follow upstream WordCraft automatically.
+#
+# Every day (and on demand) this checks storytold/wordcraft main. When it has moved, the workflow
+# pins the new commit (dependencies stay 1:1 with upstream's Cargo.lock), rebuilds the
+# WebAssembly, runs every check including the browser smoke test, and then:
+#   - release mode (default): bumps the patch version, commits, tags and publishes to npm;
+#   - pr mode: opens a pull request instead, for a human to merge and tag.
+# If upstream breaks the build, nothing is published and an issue is opened (one per upstream commit).
+#
+# Mode: set the repository variable UPSTREAM_SYNC_MODE to `pr` or `release` (default `release`),
+# or choose it when running the workflow by hand.
+name: Upstream sync
+
+on:
+  schedule:
+    - cron: '17 3 * * *' # daily, 06:17 Nairobi
+  workflow_dispatch:
+    inputs:
+      rev:
+        description: Upstream commit to sync to (default latest main)
+        required: false
+      mode:
+        description: release (publish to npm) or pr (open a pull request)
+        type: choice
+        options: [default, release, pr]
+        default: default
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      changed: ${{ steps.sync.outputs.changed }}
+      tag: ${{ steps.commit.outputs.tag }}
+      mode: ${{ steps.mode.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mode
+        id: mode
+        run: |
+          m="${{ inputs.mode }}"; [ -z "$m" ] || [ "$m" = default ] && m="${{ vars.UPSTREAM_SYNC_MODE || 'release' }}"
+          echo "mode=$m" >> "$GITHUB_OUTPUT"; echo "mode: $m"
+      - name: Pin the latest upstream commit
+        id: sync
+        run: python3 scripts/sync-upstream.py ${{ inputs.rev }}
+
+      - uses: ./.github/actions/setup
+        if: steps.sync.outputs.changed == 'true'
+      - uses: ./.github/actions/verify
+        if: steps.sync.outputs.changed == 'true'
+
+      - name: Commit, version and tag
+        id: commit
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW: ${{ steps.sync.outputs.new }}
+          OLD: ${{ steps.sync.outputs.old }}
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          short=${NEW:0:7}
+          log="https://github.com/storytold/wordcraft/compare/${OLD}...${NEW}"
+          if [ "$MODE" = pr ]; then
+            branch="upstream/$short"
+            git switch -c "$branch"
+            git add -A Cargo.toml Cargo.lock UPSTREAM_REV crates
+            git commit -m "Sync upstream WordCraft to $short" -m "Upstream changes: $log"
+            git push -f origin "$branch"
+            gh pr view "$branch" >/dev/null 2>&1 || gh pr create --head "$branch" --title "Sync upstream WordCraft to $short" \
+              --body "Upstream changes: $log. All checks, including the browser smoke test, passed on this commit. Merge, bump the package version and tag to release."
+            exit 0
+          fi
+          cd packages/wordcraft-react
+          v=$(npm version patch --no-git-tag-version | tr -d v)
+          cd ../..
+          git add -A Cargo.toml Cargo.lock UPSTREAM_REV crates packages/wordcraft-react/package.json packages/wordcraft-react/package-lock.json
+          git commit -m "Release $v: sync upstream WordCraft to $short" -m "Upstream changes: $log"
+          git tag "v$v"
+          git push origin HEAD:main "v$v"
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+
+      - name: Report a broken upstream
+        if: failure() && steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW: ${{ steps.sync.outputs.new }}
+        run: |
+          title="Upstream WordCraft ${NEW:0:7} fails the build"
+          if ! gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number' | grep -q .; then
+            gh issue create --title "$title" --body "The daily upstream sync could not build or verify storytold/wordcraft@$NEW. Nothing was published; npm still serves the previous version. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+
+  release:
+    needs: sync
+    if: needs.sync.outputs.tag != ''
+    uses: ./.github/workflows/release.yml
+    with:
+      ref: ${{ needs.sync.outputs.tag }}
+    secrets: inherit
