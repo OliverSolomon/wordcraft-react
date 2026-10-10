@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install wasm-bindgen-cli and binaryen
+        run: |
+          WBG=$(grep -A1 'name = "wasm-bindgen"$' Cargo.lock | sed -n 's/version = "\(.*\)"/\1/p')
+          cargo install wasm-bindgen-cli --version "$WBG" --locked
+          npm i -g binaryen
+      - name: Rust checks
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --target wasm32-unknown-unknown -p wordcraft-embed -- -D warnings
+          cargo test --locked -p wordcraft-embed
+      - name: Build WebAssembly
+        run: scripts/build-wasm.sh
+      - name: Build package
+        working-directory: packages/wordcraft-react
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          npm test
+          npm pack --dry-run
+      - name: Build Next.js example
+        working-directory: examples/nextjs
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wordcraft-react-package
+          path: packages/wordcraft-react/wasm
