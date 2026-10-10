@@ -4378,9 +4378,11 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "wordcraft-collab",
  "wordcraft-doc",
  "wordcraft-engine",
  "wordcraft-ui-egui",
+ "yrs",
 ]
 
 [[package]]
@@ -4499,6 +4501,7 @@ dependencies = [
  "serde_json",
  "sys-locale",
  "toml",
+ "web-time",
  "wordcraft-doc",
  "wordcraft-engine",
  "wordcraft-fonts",
