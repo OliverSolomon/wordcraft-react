@@ -66,7 +66,6 @@
     "url": "https://github.com/OliverSolomon/wordcraft-react/issues"
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   }
 }
