@@ -1,6 +1,6 @@
 {
   "name": "@gamine/wordcraft-react",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "WordCraft, the open-source Microsoft Word look-alike, as an embeddable editor for React, Next.js and plain web apps.",
   "keywords": [
     "wordcraft",

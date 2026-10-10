@@ -1,6 +1,7 @@
 # Publish @gamine/wordcraft-react to npm.
 #
-# Runs on a pushed v* tag, by hand (Actions > Release > Run workflow, on a tag), or when the
+# Runs when a commit on main changes the package version (the tag and GitHub release are then
+# created for you), on a pushed v* tag, by hand (Actions > Release > Run workflow), or when the
 # upstream sync workflow calls it after tagging a new version. It verifies the exact tagged source
 # (including the browser smoke test) before publishing, and skips versions already on npm.
 #
@@ -10,6 +11,8 @@ name: Release
 
 on:
   push:
+    branches: [main]
+    paths: ['packages/wordcraft-react/package.json']
     tags: ['v*']
   workflow_dispatch:
   workflow_call:
@@ -34,18 +37,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: npm
-    env:
-      REF: ${{ inputs.ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
-      - name: Version must match the tag
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Version and tag
+        env:
+          INPUT_REF: ${{ inputs.ref }}
         run: |
           v=$(node -p "require('./packages/wordcraft-react/package.json').version")
-          case "$REF" in v*) ;; *) echo "::error::Release runs on a v* tag, got $REF"; exit 1;; esac
-          [ "v$v" = "$REF" ] || { echo "::error::tag $REF != package version $v"; exit 1; }
+          ref="${INPUT_REF:-$GITHUB_REF_NAME}"
+          case "$ref" in
+            v*) [ "v$v" = "$ref" ] || { echo "::error::tag $ref != package version $v"; exit 1; } ;;
+            *) ref="v$v" ;;  # a branch: release the version in package.json at this commit
+          esac
           echo "VERSION=$v" >> "$GITHUB_ENV"
+          echo "REF=$ref" >> "$GITHUB_ENV"
+          echo "TARGET=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - name: Already published?
         id: npm
         run: |
@@ -69,5 +77,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$REF" >/dev/null 2>&1 || gh release create "$REF" --verify-tag --generate-notes \
+          gh release view "$REF" >/dev/null 2>&1 || gh release create "$REF" --target "$TARGET" --generate-notes \
             --notes "Upstream WordCraft: storytold/wordcraft@$(cat UPSTREAM_REV)"
