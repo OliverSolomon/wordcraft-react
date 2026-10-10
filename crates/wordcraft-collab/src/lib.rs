@@ -241,7 +241,9 @@ impl Collab {
         let text = text_at(&self.roots, &txn, pos.story, &pos.path)?;
         let para = paragraph_at(&self.shadow, pos.story, &pos.path)?;
         let y = byte_to_y(&para.text, pos.off);
-        text.sticky_index(&txn, y, Assoc::After)
+        // At the end of a paragraph there is no character after the caret to stick to, so stick
+        // to the one before it (as Yjs does for a caret at the end of a text).
+        text.sticky_index(&txn, y, Assoc::After).or_else(|| text.sticky_index(&txn, y, Assoc::Before))
     }
 
     /// Paragraph text id → its place in the document, for resolving positions.

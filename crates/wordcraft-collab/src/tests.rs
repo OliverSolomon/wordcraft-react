@@ -219,6 +219,25 @@ fn caret_anchor_follows_remote_edits() {
 }
 
 #[test]
+fn caret_at_paragraph_end_and_start_can_be_shared() {
+    let mut a = Person::first(1, simple(&["typing here"]));
+    let mut b = Person::join(2, &a);
+    let end = b.c.anchor(&Pos::body(0, 11)).expect("end of paragraph");
+    let start = b.c.anchor(&Pos::body(0, 0)).expect("start of paragraph");
+    a.at(0, 0);
+    a.run("text.insert", json!({"text": "> "}));
+    sync(&mut [&mut a, &mut b]);
+    assert_eq!(a.c.resolve(&end), Some(Pos::body(0, 13)));
+    assert_eq!(b.c.resolve(&end), Some(Pos::body(0, 13)));
+    assert!(a.c.resolve(&start).is_some());
+    // An empty paragraph too.
+    let mut c = Person::first(3, simple(&[""]));
+    assert!(c.c.anchor(&Pos::body(0, 0)).is_some());
+    c.at(0, 0);
+    c.run("text.insert", json!({"text": "x"}));
+}
+
+#[test]
 fn tables_merge_cell_by_cell() {
     let mut a = Person::first(1, simple(&["before", "after"]));
     a.at(0, 6);
