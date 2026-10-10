@@ -1,0 +1,72 @@
+{
+  "name": "@gamine/wordcraft-react",
+  "version": "0.1.0",
+  "description": "WordCraft, the open-source Microsoft Word look-alike, as an embeddable editor for React, Next.js and plain web apps.",
+  "keywords": [
+    "wordcraft",
+    "word processor",
+    "docx",
+    "editor",
+    "wysiwyg",
+    "react",
+    "nextjs",
+    "wasm"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./wasm/*": "./wasm/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "wasm",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "react": "^18.3.1",
+    "typescript": "^5.6.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OliverSolomon/wordcraft-react.git",
+    "directory": "packages/wordcraft-react"
+  },
+  "homepage": "https://github.com/OliverSolomon/wordcraft-react#readme",
+  "bugs": {
+    "url": "https://github.com/OliverSolomon/wordcraft-react/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

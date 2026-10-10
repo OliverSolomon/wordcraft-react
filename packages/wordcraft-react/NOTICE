@@ -1,0 +1,19 @@
+@gamine/wordcraft-react
+Copyright (c) 2026 Oliver Solomon and contributors.
+Licensed under the Apache License, Version 2.0 (LICENSE) or the MIT License (LICENSE-MIT), at your
+option, the same terms as upstream WordCraft.
+
+This package compiles and bundles WordCraft (https://github.com/storytold/wordcraft),
+Copyright (c) 2026 ArtCraft Team and the WordCraft contributors, MIT OR Apache-2.0.
+The exact upstream commit is recorded in UPSTREAM_REV and in wasm/UPSTREAM inside the package.
+This is an independent wrapper and is not an official WordCraft or ArtCraft release. The ArtCraft
+name, wordmark and logos are trademarks of the ArtCraft Team and are not used here.
+
+Third-party material bundled in the WebAssembly module (from upstream WordCraft):
+- Source Sans 3, Source Serif 4, Inter, JetBrains Mono: SIL Open Font License 1.1.
+- English hyphenation word list derived from Moby Hyphenator II (public domain); patterns CC0-1.0.
+- UI icons drawn in code by the WordCraft contributors, MIT OR Apache-2.0.
+Upstream's per-file list is in its ATTRIBUTION.md.
+
+WordCraft is not affiliated with or endorsed by Microsoft. Microsoft Word is a trademark of
+Microsoft Corporation, used here only to describe compatibility.
