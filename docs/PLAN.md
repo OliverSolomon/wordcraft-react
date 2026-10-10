@@ -38,7 +38,7 @@ The embed crate replaces only the upstream page shell (`apps/<name>-web/src/web.
 - fires `onChange` after edits, deferred to a microtask so callbacks can safely call back into the editor.
 - turns autosave and local storage off, because the host owns persistence.
 
-Upstream is consumed as a git dependency pinned to one commit (`UPSTREAM_REV`), never forked. Updating is `scripts/bump-upstream.sh`, then a rebuild, a smoke test and a release.
+Upstream is consumed as a git dependency pinned to one commit (`UPSTREAM_REV`), never forked. Updating is automatic. The daily Upstream sync workflow pins the new commit with upstream's own lockfile, rebuilds, runs every check including a headless-browser smoke test, and publishes a patch release. If upstream breaks anything, it opens an issue instead. `scripts/sync-upstream.py` does the same pinning by hand.
 
 ## Phases
 

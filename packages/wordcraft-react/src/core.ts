@@ -8,7 +8,7 @@
  */
 
 /** Formats WordCraft can open. */
-export type OpenFormat = 'docx' | 'docm' | 'dotx' | 'dotm' | 'odt' | 'rtf' | 'md' | 'html' | 'htm' | 'txt' | 'tex' | 'json';
+export type OpenFormat = 'docx' | 'docm' | 'dotx' | 'dotm' | 'doc' | 'dot' | 'odt' | 'rtf' | 'md' | 'html' | 'htm' | 'txt' | 'tex' | 'json';
 /** Formats WordCraft can save or export. */
 export type ExportFormat = 'docx' | 'docm' | 'dotx' | 'dotm' | 'odt' | 'rtf' | 'md' | 'html' | 'txt' | 'tex' | 'json' | 'pdf' | 'png';
 
@@ -86,6 +86,8 @@ export interface WordcraftOptions {
    * to serve it from a CDN or `public/`.
    */
   wasmUrl?: string | URL;
+  /** Ask before the browser tab closes or navigates away with unsaved changes. Off by default. */
+  guardUnload?: boolean;
   /** Called after edits (coalesced to at most once per frame). */
   onChange?: (info: ChangeInfo) => void;
   /**
@@ -115,6 +117,8 @@ export interface WordcraftEditor {
   getText(): string;
   /** The selected text. */
   getSelectedText(): string;
+  /** Open the browser's print dialog on the document (File > Print). */
+  print(): void;
   /** Run any WordCraft command by id, e.g. `execute('format.bold')`, `execute('text.insert', { text: 'Hi' })`. */
   execute<T = unknown>(command: string, params?: Record<string, unknown>): T;
   /** Every command in WordCraft's registry. */
@@ -200,6 +204,7 @@ function loadGlue(wasmUrl?: string | URL): Promise<Glue> {
 
 const MIME: Record<string, string> = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  doc: 'application/msword',
   docm: 'application/vnd.ms-word.document.macroEnabled.12',
   dotx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.template',
   odt: 'application/vnd.oasis.opendocument.text',
@@ -255,6 +260,7 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
   const mountOptions = JSON.stringify({
     sample: !!options.sample,
     renderer: options.renderer ?? 'auto',
+    guardUnload: !!options.guardUnload,
     prefs: { ...DEFAULT_PREFS, ...(options.prefs ?? {}) },
   });
 
@@ -331,6 +337,9 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     commands() {
       alive();
       return JSON.parse(raw.commands()) as CommandInfo[];
+    },
+    print() {
+      editor.execute('ui.print');
     },
     undo() {
       editor.execute('edit.undo');

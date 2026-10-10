@@ -28,6 +28,8 @@ export interface WordcraftEditorProps {
   dark?: boolean;
   /** Shorthand for `prefs.author` (comments and tracked changes). */
   author?: string;
+  /** Ask before the tab closes with unsaved changes. Read once, on mount. */
+  guardUnload?: boolean;
   /** Where to load the `.wasm` from (CDN or `public/`). Read once, on mount. */
   wasmUrl?: string | URL;
   /** Editor height. Defaults to 720px; WordCraft is a full application and needs room. */
@@ -79,6 +81,7 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
       sample: !p.document && p.sample,
       renderer: p.renderer,
       wasmUrl: p.wasmUrl,
+      guardUnload: p.guardUnload,
       prefs: mergedPrefs(p),
       onChange: (info) => instance && latest.current.onChange?.(info, instance),
       onSave: (file) => (instance ? latest.current.onSave?.(file, instance) : undefined),

@@ -15,8 +15,10 @@ use wordcraft_ui_egui::{Inbox, Services, UiState, WordApp};
 
 use crate::{MountOptions, merge_json, mime_for};
 
-const DOC_EXTS: &[&str] = &["docx", "docm", "dotx", "dotm", "odt", "rtf", "txt", "md", "html", "htm", "tex", "json"];
+const DOC_EXTS: &[&str] = &["docx", "docm", "dotx", "dotm", "doc", "dot", "odt", "rtf", "txt", "md", "html", "htm", "tex", "json"];
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+
+type UnloadListener = Closure<dyn FnMut(web_sys::BeforeUnloadEvent)>;
 
 /// State shared by the egui frame loop and the JavaScript handle.
 struct Shared {
@@ -28,6 +30,7 @@ struct Shared {
     last_rev: Cell<u64>,
     last_dirty: Cell<bool>,
     change_pending: Cell<bool>,
+    unload_listener: RefCell<Option<UnloadListener>>,
 }
 
 impl Shared {
@@ -66,6 +69,7 @@ pub async fn mount(
         last_rev: Cell::new(0),
         last_dirty: Cell::new(false),
         change_pending: Cell::new(false),
+        unload_listener: RefCell::new(None),
     });
 
     let mut web_options = eframe::WebOptions::default();
@@ -74,6 +78,23 @@ pub async fn mount(
     {
         create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
     }
+
+    // Upstream's leave-page guard, opt-in here because the host page owns navigation.
+    let guard = if opts.guard_unload {
+        let dirty = Rc::new(Cell::new(false));
+        match guard_unload(dirty.clone()) {
+            Ok(listener) => {
+                *shared.unload_listener.borrow_mut() = Some(listener);
+                Some(dirty)
+            }
+            Err(e) => {
+                log::error!("no unsaved-changes guard: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     let runner = eframe::WebRunner::new();
     let creator_shared = shared.clone();
@@ -86,7 +107,7 @@ pub async fn mount(
                     log::info!("wordcraft-embed: wgpu backend {:?}", rs.adapter.get_info().backend);
                 }
                 let doc = if opts.sample { wordcraft_engine::sample::sample_document() } else { wordcraft_doc::Document::new() };
-                let mut app = WordApp::new(Session::new(doc), services(&creator_shared, cc.egui_ctx.clone()));
+                let mut app = WordApp::new(Session::new(doc), services(&creator_shared, cc.egui_ctx.clone(), guard.clone()));
                 // The host owns persistence: no autosave, no localStorage writes behind its back.
                 app.autosave = false;
                 if let Some(p) = &opts.prefs {
@@ -185,7 +206,8 @@ impl eframe::App for Shell {
     }
 }
 
-fn services(shared: &Rc<Shared>, ctx: egui::Context) -> Services {
+/// `guard` is the flag the optional `beforeunload` guard reads ([`guard_unload`]).
+fn services(shared: &Rc<Shared>, ctx: egui::Context, guard: Option<Rc<Cell<bool>>>) -> Services {
     let open_inbox = shared.inbox.clone();
     let save_shared = shared.clone();
     Services {
@@ -229,7 +251,10 @@ fn services(shared: &Rc<Shared>, ctx: egui::Context) -> Services {
                     }
                 }
             });
+            Ok(())
         })),
+        print: Some(Box::new(print_pdf)),
+        on_dirty: guard.map(|dirty| Box::new(move |d: bool| dirty.set(d)) as Box<dyn Fn(bool)>),
         inbox: Some(shared.inbox.clone()),
         ..Default::default()
     }
@@ -261,6 +286,77 @@ fn download(name: &str, data: &js_sys::Uint8Array) -> Result<(), String> {
         web_sys::Url::revoke_object_url(&url).ok();
     });
     window.set_timeout_with_callback_and_timeout_and_arguments_0(revoke.unchecked_ref(), 10_000).map_err(js)?;
+    Ok(())
+}
+
+/// Ask before closing or leaving the tab with unsaved changes (from upstream `apps/wordcraft-web`).
+/// Returns the listener so `destroy()` can remove it.
+fn guard_unload(dirty: Rc<Cell<bool>>) -> Result<UnloadListener, String> {
+    let window = web_sys::window().ok_or("no window")?;
+    let on_unload = Closure::<dyn FnMut(web_sys::BeforeUnloadEvent)>::new(move |e: web_sys::BeforeUnloadEvent| {
+        if dirty.get() {
+            e.prevent_default();
+            e.set_return_value("unsaved changes");
+        }
+    });
+    window.add_event_listener_with_callback("beforeunload", on_unload.as_ref().unchecked_ref()).map_err(|e| format!("{e:?}"))?;
+    Ok(on_unload)
+}
+
+/// The hidden iframe the last print loaded its PDF into.
+const PRINT_FRAME_ID: &str = "wordcraft-print-frame";
+
+/// File › Print: load the PDF into a hidden iframe and open the browser's own print dialog on it,
+/// as upstream `apps/wordcraft-web` does (no download, no popup). The previous print's iframe and
+/// object URL are removed first.
+fn print_pdf(bytes: &[u8]) -> Result<(), String> {
+    let js = |e: JsValue| format!("{e:?}");
+    let window = web_sys::window().ok_or("no window")?;
+    let document = window.document().ok_or("no document")?;
+    if let Some(old) = document.get_element_by_id(PRINT_FRAME_ID) {
+        if let Ok(frame) = old.clone().dyn_into::<web_sys::HtmlIFrameElement>() {
+            let src = frame.src();
+            if src.starts_with("blob:") {
+                web_sys::Url::revoke_object_url(&src).ok();
+            }
+        }
+        old.remove();
+    }
+    let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
+    let opts = web_sys::BlobPropertyBag::new();
+    opts.set_type("application/pdf");
+    let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &opts).map_err(js)?;
+    let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(js)?;
+    let iframe: web_sys::HtmlIFrameElement =
+        match document.create_element("iframe").map_err(js).and_then(|e| e.dyn_into().map_err(|_| "not an iframe".to_string())) {
+            Ok(f) => f,
+            Err(e) => {
+                web_sys::Url::revoke_object_url(&url).ok();
+                return Err(e);
+            }
+        };
+    iframe.set_id(PRINT_FRAME_ID);
+    let attached = iframe
+        .style()
+        .set_property("display", "none")
+        .map_err(js)
+        .and_then(|()| document.body().ok_or_else(|| "no body".to_string()))
+        .and_then(|body| body.append_child(&iframe).map_err(js));
+    if let Err(e) = attached {
+        iframe.remove();
+        web_sys::Url::revoke_object_url(&url).ok();
+        return Err(e);
+    }
+    // Listen before setting `src`, so a fast load can't fire first.
+    let frame = iframe.clone();
+    let on_load = Closure::once_into_js(move || {
+        if let Some(w) = frame.content_window() {
+            // Some built-in PDF viewers print fine but still report an error here.
+            let _ = w.print();
+        }
+    });
+    iframe.set_onload(Some(on_load.unchecked_ref()));
+    iframe.set_src(&url);
     Ok(())
 }
 
@@ -420,5 +516,8 @@ impl WordcraftHandle {
             *app = None;
         }
         *self.shared.ctx.borrow_mut() = None;
+        if let (Some(listener), Some(window)) = (self.shared.unload_listener.borrow_mut().take(), web_sys::window()) {
+            window.remove_event_listener_with_callback("beforeunload", listener.as_ref().unchecked_ref()).ok();
+        }
     }
 }

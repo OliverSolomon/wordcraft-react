@@ -11,9 +11,9 @@ rust-version = "1.90"
 # Upstream WordCraft, pinned to one commit so every build of the package ships the exact same
 # editor. Bump with scripts/bump-upstream.sh, which rewrites all three revs and UPSTREAM_REV.
 [workspace.dependencies]
-wordcraft-engine = { git = "https://github.com/storytold/wordcraft", rev = "b64153f604137761bb4cef31b14e6ffb42af845a" }
-wordcraft-ui-egui = { git = "https://github.com/storytold/wordcraft", rev = "b64153f604137761bb4cef31b14e6ffb42af845a" }
-wordcraft-doc = { git = "https://github.com/storytold/wordcraft", rev = "b64153f604137761bb4cef31b14e6ffb42af845a" }
+wordcraft-engine = { git = "https://github.com/storytold/wordcraft", rev = "004286e4b73adce50c0dea1847bf297625922729" }
+wordcraft-ui-egui = { git = "https://github.com/storytold/wordcraft", rev = "004286e4b73adce50c0dea1847bf297625922729" }
+wordcraft-doc = { git = "https://github.com/storytold/wordcraft", rev = "004286e4b73adce50c0dea1847bf297625922729" }
 
 [profile.release]
 opt-level = 3

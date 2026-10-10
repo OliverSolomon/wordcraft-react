@@ -28,6 +28,8 @@ pub struct MountOptions {
     pub sample: bool,
     /// Initial UI preferences (WordCraft `UiState` JSON: `tab`, `dark`, `language`, ...).
     pub prefs: Option<serde_json::Value>,
+    /// Ask before the tab closes with unsaved changes (upstream's leave-page guard).
+    pub guard_unload: bool,
 }
 
 impl MountOptions {
@@ -36,7 +38,12 @@ impl MountOptions {
         let v: serde_json::Value = serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
         let flag = |k: &str| v.get(k).and_then(serde_json::Value::as_bool).unwrap_or(false);
         let renderer_webgl = v.get("renderer").and_then(serde_json::Value::as_str) == Some("webgl");
-        MountOptions { webgl: flag("webgl") || renderer_webgl, sample: flag("sample"), prefs: v.get("prefs").filter(|p| p.is_object()).cloned() }
+        MountOptions {
+            webgl: flag("webgl") || renderer_webgl,
+            sample: flag("sample"),
+            prefs: v.get("prefs").filter(|p| p.is_object()).cloned(),
+            guard_unload: flag("guardUnload"),
+        }
     }
 }
 
@@ -56,6 +63,7 @@ pub fn mime_for(name: &str) -> &'static str {
         Some("jpg" | "jpeg") => "image/jpeg",
         Some("pdf") => "application/pdf",
         Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        Some("doc") => "application/msword",
         Some("docm") => "application/vnd.ms-word.document.macroEnabled.12",
         Some("dotx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
         Some("odt") => "application/vnd.oasis.opendocument.text",
@@ -77,7 +85,8 @@ mod tests {
     fn options_parse_leniently() {
         assert_eq!(MountOptions::parse("not json"), MountOptions::default());
         let o = MountOptions::parse(r#"{"renderer":"webgl","sample":true,"prefs":{"dark":true},"extra":1}"#);
-        assert!(o.webgl && o.sample);
+        assert!(o.webgl && o.sample && !o.guard_unload);
+        assert!(MountOptions::parse(r#"{"guardUnload":true}"#).guard_unload);
         assert_eq!(o.prefs, Some(serde_json::json!({"dark": true})));
         assert_eq!(MountOptions::parse(r#"{"prefs":3}"#).prefs, None);
     }

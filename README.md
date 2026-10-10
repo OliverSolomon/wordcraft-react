@@ -53,6 +53,7 @@ A complete example app lives in [`examples/nextjs`](examples/nextjs).
 | `onChange({ rev, dirty }, editor)` | | Called after edits, at most once per frame. |
 | `onSave(file, editor)` | | Called on Save, Save As and Export in WordCraft's own UI with `{ name, mimeType, bytes }`. If the promise you return resolves, the document is marked saved. Without this prop the browser downloads the file. |
 | `onError(error)` | | |
+| `guardUnload` | `boolean` | Asks before the tab closes with unsaved changes, as the WordCraft web app does. Off by default, because your app owns navigation. |
 | `wasmUrl` | `string \| URL` | Overrides where the binary loads from. |
 
 ## Editor API (the ref)
@@ -66,6 +67,7 @@ editor.getHTML(); editor.getMarkdown(); editor.getText(); editor.getSelectedText
 editor.execute('format.bold');    // any WordCraft command id
 editor.execute('text.insert', { text: 'Hello' });
 editor.commands();                // [{ id, label, location, shortcut, params, mutates }, ...]
+editor.print();                   // the browser's print dialog, as File > Print does
 editor.undo(); editor.redo(); editor.canUndo(); editor.canRedo();
 editor.isDirty(); editor.markSaved(); editor.rev(); editor.title();
 editor.getPrefs(); editor.setPrefs({ tab: 'Review', dark: true });
@@ -102,7 +104,8 @@ crates/wordcraft-embed   Rust: wasm-bindgen API over upstream WordCraft (pinned 
 packages/wordcraft-react TypeScript: createWordcraft() core + <WordcraftEditor /> React component
 examples/nextjs          Next.js App Router example
 scripts/build-wasm.sh    Builds the .wasm into packages/wordcraft-react/wasm
-scripts/bump-upstream.sh Moves to a newer upstream WordCraft commit
+scripts/sync-upstream.py Pins a newer upstream WordCraft commit, dependencies 1:1 with upstream
+examples/nextjs/smoke-test.mjs  Headless-browser test of the embedded editor and its API
 docs/PLAN.md             Plan of action for the WordCraft and GridCraft packages
 ```
 
@@ -117,7 +120,17 @@ cd packages/wordcraft-react && npm install && npm run build && npm test
 cd ../../examples/nextjs && npm install && npm run dev
 ```
 
-To release, bump the version in `packages/wordcraft-react/package.json` and push a matching `v*` tag. The release workflow builds the binary and publishes to npm with provenance. It needs an `NPM_TOKEN` secret.
+## Staying in step with upstream
+
+The **Upstream sync** workflow runs every morning (06:17 Nairobi time), and you can also start it by hand from the Actions tab. When storytold/wordcraft has new commits, it:
+
+1. pins the new commit and copies upstream's `Cargo.lock`, so every shared dependency matches upstream exactly;
+2. rebuilds the WebAssembly and runs every check: Rust lints and tests, the package tests, the Next.js example build, and a headless-browser smoke test that starts the editor and exercises the API;
+3. if everything passes, bumps the patch version, commits, tags `vX.Y.Z` and publishes to npm through the Release workflow.
+
+If upstream breaks anything, nothing is published. npm keeps serving the last good version, and the workflow opens an issue that links to the failed run. If you'd rather review each update before it ships, set the repository variable `UPSTREAM_SYNC_MODE` to `pr`, and the workflow will open a pull request instead of publishing.
+
+To release by hand, bump the version in `packages/wordcraft-react/package.json` and push a matching `v*` tag. Publishing needs either an `NPM_TOKEN` repository secret (a granular npm token with publish rights on `@gamine`) or npm trusted publishing configured for this repository's `release.yml`. A version that is already on npm is skipped, so re-running a release is safe.
 
 ## License and credits
 
