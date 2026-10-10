@@ -1,0 +1,8 @@
+/target
+node_modules/
+packages/*/dist/
+packages/*/wasm/
+examples/*/.next/
+examples/*/out/
+*.tsbuildinfo
+.DS_Store
