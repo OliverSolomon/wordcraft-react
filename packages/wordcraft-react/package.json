@@ -13,6 +13,7 @@
     "wasm"
   ],
   "license": "MIT OR Apache-2.0",
+  "author": "Oliver Solomon (https://github.com/OliverSolomon)",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.js",
