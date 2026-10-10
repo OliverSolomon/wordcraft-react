@@ -31,6 +31,8 @@ permissions:
 
 concurrency:
   group: release-${{ inputs.ref || github.ref }}
+  # A newer push to main supersedes a release still building from an older commit.
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref_type == 'branch' }}
 
 jobs:
   publish:
