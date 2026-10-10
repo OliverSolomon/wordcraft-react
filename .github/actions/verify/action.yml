@@ -35,10 +35,19 @@ runs:
         npx next start -p 3000 > next.log 2>&1 &
         for i in $(seq 1 30); do curl -sf http://localhost:3000/ >/dev/null && break; sleep 1; done
         npm run smoke -- http://localhost:3000/
+    - name: Co-editing smoke test (two browsers through y-websocket)
+      shell: bash
+      working-directory: examples/nextjs
+      run: |
+        npm run collab-server > collab.log 2>&1 &
+        for i in $(seq 1 30); do (echo > /dev/tcp/127.0.0.1/1234) 2>/dev/null && break; sleep 1; done
+        npm run smoke:collab -- http://localhost:3000
     - name: Keep screenshots
       if: always()
       uses: actions/upload-artifact@v5
       with:
         name: smoke-screenshots-${{ github.run_id }}-${{ github.run_attempt }}
-        path: examples/nextjs/smoke-*.png
+        path: |
+          examples/nextjs/smoke-*.png
+          examples/nextjs/collab-*.png
         if-no-files-found: ignore

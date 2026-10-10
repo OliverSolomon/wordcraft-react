@@ -59,6 +59,8 @@ export interface SavedFile {
   name: string;
   mimeType: string;
   bytes: Uint8Array;
+  /** The same bytes as a Blob with the right MIME type, ready for `fetch(url, { body })`. */
+  blob: Blob;
   /** `autosave` when AutoSave wrote it (a couple of seconds after edits), else `save`. */
   reason: 'save' | 'autosave';
 }
@@ -263,7 +265,7 @@ interface RawHandle {
   getPrefs(): string;
   setPrefs(patch: string): void;
   setOnChange(cb: ((info: ChangeInfo) => void) | null): void;
-  setOnSave(cb: ((file: SavedFile) => void) | null): void;
+  setOnSave(cb: ((file: Omit<SavedFile, 'blob'>) => void) | null): void;
   hasPanicked(): boolean;
   getUser(): string;
   setUserName(name: string): void;
@@ -392,7 +394,10 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
 
   const wrapSave = (cb: ((file: SavedFile) => void | Promise<void>) | null | undefined) =>
     cb
-      ? (file: SavedFile) => {
+      ? (raw_file: Omit<SavedFile, 'blob'>) => {
+          const copy = new Uint8Array(raw_file.bytes.byteLength);
+          copy.set(raw_file.bytes);
+          const file: SavedFile = { ...raw_file, bytes: copy, blob: new Blob([copy.buffer], { type: raw_file.mimeType }) };
           const ext = file.name.slice(file.name.lastIndexOf('.') + 1).toLowerCase();
           const persists = ['docx', 'docm', 'dotx', 'dotm', 'odt', 'rtf', 'json'].includes(ext);
           Promise.resolve(cb(file))

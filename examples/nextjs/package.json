@@ -5,18 +5,25 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "smoke": "node smoke-test.mjs"
+    "smoke": "node smoke-test.mjs",
+    "collab-server": "node collab-server.mjs",
+    "smoke:collab": "node smoke-collab.mjs"
   },
   "dependencies": {
     "@gamine/wordcraft-react": "file:../../packages/wordcraft-react",
     "next": "15.5.27",
     "react": "19.1.1",
-    "react-dom": "19.1.1"
+    "react-dom": "19.1.1",
+    "y-websocket": "^3.1.0",
+    "yjs": "^13.6.27"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
     "@types/react": "^19.1.12",
+    "lib0": "^0.2.114",
+    "playwright": "1.56.1",
     "typescript": "^5.6.3",
-    "playwright": "1.56.1"
+    "ws": "^8.18.3",
+    "y-protocols": "^1.0.6"
   }
 }

@@ -56,8 +56,10 @@ impl CollabState {
         [app.session.sel.anchor.clone(), app.session.sel.focus.clone()]
     }
 
-    /// Apply an update from someone else.
+    /// Apply an update from someone else. Local edits not yet shared (made since the last frame)
+    /// go into the shared document first, or the merge would overwrite them.
     pub fn apply(&mut self, app: &mut WordApp, update: &[u8]) -> Result<(), String> {
+        self.share_local(app);
         let (doc, sel) = self.c.apply_remote(update, &Self::selection(app)).map_err(|e| e.to_string())?;
         Self::install(app, doc, sel);
         self.synced_rev = app.session.rev();

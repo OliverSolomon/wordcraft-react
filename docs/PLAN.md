@@ -26,8 +26,10 @@ The trade-off with option 2 is that the editor is a canvas application. Host CSS
 host React / Next.js app
   └─ <WordcraftEditor /> (packages/*/src/index.tsx: 'use client', SSR-safe, ref API)
        └─ createWordcraft(el) (packages/*/src/core.ts: framework-agnostic loader + typed API)
-            └─ wordcraft_embed.wasm (crates/*-embed: wasm-bindgen surface, pinned upstream)
-                 └─ upstream WordApp / Session (unmodified egui UI + engine)
+            ├─ /collab: yjsCollaboration() (Yjs doc + awareness ⇄ the editor's co-editing port)
+            └─ wordcraft_embed.wasm (crates/*-embed: wasm-bindgen surface)
+                 ├─ crates/*-collab (the document model as a Yjs-compatible CRDT, via yrs)
+                 └─ upstream WordApp / Session (pinned commit + patches/)
 ```
 
 The embed crate replaces only the upstream page shell (`apps/<name>-web/src/web.rs`). It:
@@ -36,9 +38,11 @@ The embed crate replaces only the upstream page shell (`apps/<name>-web/src/web.
 - exposes `load`, `export` in every upstream format, `execute(commandId, params)`, `commands()`, text getters, undo state, dirty tracking and UI preferences.
 - sends Save, Save As and Export to a host `onSave` callback, falling back to a browser download.
 - fires `onChange` after edits, deferred to a microtask so callbacks can safely call back into the editor.
-- turns autosave and local storage off, because the host owns persistence.
+- runs AutoSave through `onSave` (never browser storage), switchable from the title bar toggle as in Word.
+- sets the person editing (avatar, comments, tracked changes) and can hide the title bar and the ribbon (Word's Ribbon Display Options).
+- co-edits: keeps the document in a Yjs-compatible shared state, sends Undo and Redo through it so they take back only your own changes, and draws other people's cursors, selections and avatars.
 
-Upstream is consumed as a git dependency pinned to one commit (`UPSTREAM_REV`), never forked. Updating is automatic. The daily Upstream sync workflow pins the new commit with upstream's own lockfile, rebuilds, runs every check including a headless-browser smoke test, and publishes a patch release. If upstream breaks anything, it opens an issue instead. `scripts/sync-upstream.py` does the same pinning by hand.
+Upstream is pinned to one commit (`UPSTREAM_REV`) and never forked. A few small hooks the embed needs are kept as patches in `patches/`, applied by `scripts/prepare-upstream.sh` before every build, and written so they can be offered upstream. Updating is automatic. The daily Upstream sync workflow pins the new commit, re-applies the patches, takes upstream's own lockfile, rebuilds, runs every check including a headless-browser smoke test, and publishes a patch release. If upstream breaks anything, it opens an issue instead. `scripts/sync-upstream.py` does the same pinning by hand.
 
 ## Phases
 
@@ -49,7 +53,9 @@ Upstream is consumed as a git dependency pinned to one commit (`UPSTREAM_REV`), 
 4. Next.js App Router example (done).
 5. CI that runs fmt, clippy, tests, the binary build, the package build and the example build, plus a tag-driven npm release with provenance (done).
 6. Browser verification in headless Chromium (WebGL2): the full ribbon renders, and load, export (docx, pdf, html, md), the docx round trip, execute, prefs, Ctrl+S reaching onSave, and keyboard typing all work (done).
-7. Publish to npm: needs an `NPM_TOKEN` secret with rights on the `@gamine` scope, then a `v0.1.0` tag.
+7. Publish to npm (done: 0.1.1, then automatic releases).
+8. Working AutoSave when embedded, a configurable and readable user, and hideable title bar and ribbon (done, 0.2.0).
+9. Real-time co-editing the way Word does it, on Yjs (done, 0.2.0): character-level merging, property-level formatting merges, per-person undo, cursors and avatars, AutoSave of the one shared file with version history in the example, and a two-browser test in CI.
 
 ### Phase 2: GridCraft
 Copy this repo's template to `gridcraft-react`. GridCraft has the same layout (`apps/gridcraft-web`, `crates/ui-egui`, `crates/engine`, egui 0.36), so the embed crate is a port of this one. The spreadsheet-specific API additions are:
@@ -60,7 +66,8 @@ Copy this repo's template to `gridcraft-react`. GridCraft has the same layout (`
 ### Phase 3: Hardening and developer experience
 - A shared `@gamine/craft-core` loader if more craft apps follow (PDFCraft, DesignCraft and others share the conventions).
 - Precompressed `.wasm.br` and a documented CDN recipe.
-- Playwright smoke tests in CI against the example app.
+- Server-side snapshots: convert the shared state to .docx on the server (a Node build of the collab crate), so the file stays current even when nobody's editor is open.
+- Comments and tracked changes shown live per author in co-editing (they already sync as data).
 - Docs site with live demos.
 - Optional: ask upstream to accept the embed API as a `lib` target in `apps/<name>-web`. The wrapper would then shrink to the TypeScript layer.
 

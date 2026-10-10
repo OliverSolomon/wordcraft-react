@@ -45,13 +45,18 @@ A complete example app lives in [`examples/nextjs`](examples/nextjs).
 |---|---|---|
 | `document` | `{ name, data }` | Opens on mount. `data` can be an `ArrayBuffer`, a `Uint8Array` or a `Blob`, and the extension in `name` picks the format. If you change it later, the new document loads. |
 | `sample` | `boolean` | Starts with WordCraft's built-in sample document. |
-| `dark`, `author`, `prefs` | | UI preferences, applied live: ribbon `tab`, `dark`, `darkPage`, `ribbonCollapsed`, `language`, `author`, `showDiscord`. |
+| `user` | `{ name, color?, id? }` | The person editing. The name shows on the title bar avatar and signs comments and tracked changes; `color` is their cursor colour when co-editing. Changes apply live; read it back with `editor.getUser()`. |
+| `autoSave` | `boolean` | AutoSave starts on (default) or off. It writes through `onSave` with `reason: 'autosave'` a couple of seconds after edits, and the title bar toggle switches it, as in Word. Needs `onSave`. |
+| `titleBar` | `boolean` | `false` hides the title bar (AutoSave, Quick Access Toolbar, title, search, avatar). |
+| `ribbon` | `'full' \| 'tabs' \| 'hidden'` | Word's Ribbon Display Options: always show, show tabs only, or hide the ribbon completely. |
+| `collaboration` | | Real-time co-editing, e.g. `yjsCollaboration({ doc, provider })`. See [Co-editing](#co-editing). |
+| `dark`, `prefs` | | UI preferences, applied live: ribbon `tab`, `dark`, `darkPage`, `language`, `showDiscord`. |
 | `renderer` | `'auto' \| 'webgl'` | Uses WebGPU and falls back to WebGL2. Pass `webgl` to force WebGL2. |
 | `height`, `className`, `style` | | The editor fills its container. The default height is 720px. |
 | `loading`, `fallback` | `ReactNode` | `loading` shows while the editor starts. `fallback` shows if it can't start. |
 | `onReady(editor)` | | Called once the editor is running. |
 | `onChange({ rev, dirty }, editor)` | | Called after edits, at most once per frame. |
-| `onSave(file, editor)` | | Called on Save, Save As and Export in WordCraft's own UI with `{ name, mimeType, bytes }`. If the promise you return resolves, the document is marked saved. Without this prop the browser downloads the file. |
+| `onSave(file, editor)` | | Called on Save, Save As, Export and AutoSave in WordCraft's own UI with `{ name, mimeType, bytes, blob, reason }`. If the promise you return resolves, the document is marked saved. Without this prop the browser downloads the file and AutoSave stays off. |
 | `onError(error)` | | |
 | `guardUnload` | `boolean` | Asks before the tab closes with unsaved changes, as the WordCraft web app does. Off by default, because your app owns navigation. |
 | `wasmUrl` | `string \| URL` | Overrides where the binary loads from. |
@@ -70,11 +75,53 @@ editor.commands();                // [{ id, label, location, shortcut, params, m
 editor.print();                   // the browser's print dialog, as File > Print does
 editor.undo(); editor.redo(); editor.canUndo(); editor.canRedo();
 editor.isDirty(); editor.markSaved(); editor.rev(); editor.title();
-editor.getPrefs(); editor.setPrefs({ tab: 'Review', dark: true });
+editor.getPrefs(); editor.setPrefs({ tab: 'Review', dark: true, hideTitleBar: true });
+editor.getUser(); editor.setUser({ name: 'Ada Lovelace', color: '#c2410c' });
+editor.isAutoSaving(); editor.setAutoSave(false);
 editor.destroy();
 ```
 
 `execute` runs the same command registry that WordCraft's ribbon, keyboard shortcuts, CLI and MCP server use, so anything a user can do from the ribbon can also be scripted. Call `editor.commands()` for the full list, including each command's parameters.
+
+## Co-editing
+
+Several people can edit one document at once, the way Word's co-authoring works:
+
+- **Merging.** Changes merge as people type, down to the character. Two people typing in the same paragraph both keep their words. Formatting merges property by property, so one person's bold and another's italics on the same word both stick.
+- **Structure.** Paragraph splits, tables, headers, footers, notes, comments, pictures and document settings are all shared.
+- **Undo.** Ctrl+Z and the Undo button take back only your own changes, not other people's.
+- **Presence.** Everyone else's cursor and selection show on the page in their colour with a name flag, and their avatars appear in the title bar.
+- **Saving.** AutoSave writes the merged document over the one shared file, so nobody's save overwrites anyone else's work. Keep earlier versions on your server if you want version history; the example does.
+
+It runs on [Yjs](https://yjs.dev), so any Yjs provider can carry it: y-websocket, Hocuspocus, Liveblocks, PartyKit, y-webrtc, or your own. Install `yjs` and a provider, then:
+
+```tsx
+'use client';
+import { useEffect, useMemo } from 'react';
+import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
+import { WordcraftEditor } from '@gamine/wordcraft-react';
+import { yjsCollaboration } from '@gamine/wordcraft-react/collab';
+
+export function SharedEditor({ docId, me }: { docId: string; me: { name: string; color: string } }) {
+  const collab = useMemo(() => {
+    const doc = new Y.Doc();
+    const provider = new WebsocketProvider('wss://collab.example.com', docId, doc);
+    return { provider, collaboration: yjsCollaboration({ doc, provider }) };
+  }, [docId]);
+  useEffect(() => () => collab.provider.destroy(), [collab]);
+
+  return (
+    <WordcraftEditor
+      user={me}
+      collaboration={collab.collaboration}
+      onSave={(file) => fetch(`/api/documents/${docId}`, { method: 'PUT', body: file.blob })}
+    />
+  );
+}
+```
+
+The first person to open a document shares whatever the editor has open (pass the stored file as `document`). Everyone who joins later gets the live shared document instead. `yjsCollaboration` waits for the provider's first sync before joining, so a document is never put in twice. [`examples/nextjs/app/collab`](examples/nextjs/app/collab) is a complete page with a shared-file API that keeps the last 20 versions. Run `npm run collab-server` next to `npm run dev` and open `/collab` in two windows to try it.
 
 ## Without React
 
@@ -95,17 +142,20 @@ The `/core` entry point has no React dependency, and importing it on the server 
 - **Size.** The binary is about 25 MB, or about 10 MB gzipped, and it's the full application, including its fonts. Load it on the pages that need it, and call `preloadWordcraft()` on hover or route prefetch.
 - **Rendering.** WordCraft draws onto a `<canvas>` with its own UI toolkit (egui), which is why it can match Word's interface pixel for pixel. The flip side is that host CSS can't style what's inside the editor. Use `prefs` (dark mode, language, ribbon) and commands instead.
 - **Keyboard.** As with any embedded app, shortcuts go to the editor once it has focus.
-- **Persistence.** Autosave and local storage are switched off when the editor is embedded. Your app owns the document, so use `onSave`, or call `export()` whenever you like.
+- **Persistence.** The editor never writes to browser storage. Your app owns the document, and both AutoSave and Save go through `onSave`. You can also call `export()` whenever you like.
+- **Patches on upstream.** The package applies three small patches to WordCraft, listed in [`patches/`](patches): AutoSave on the web, hideable title bar and ribbon, the co-editing hooks, and the browser clock. They're written so they can be offered upstream.
 
 ## Repository layout
 
 ```
-crates/wordcraft-embed   Rust: wasm-bindgen API over upstream WordCraft (pinned in Cargo.toml / UPSTREAM_REV)
-packages/wordcraft-react TypeScript: createWordcraft() core + <WordcraftEditor /> React component
-examples/nextjs          Next.js App Router example
+crates/wordcraft-embed   Rust: wasm-bindgen API over upstream WordCraft (pinned in UPSTREAM_REV)
+crates/wordcraft-collab  Rust: WordCraft documents as a Yjs-compatible CRDT (co-editing)
+patches/                 Small hooks applied on top of upstream by scripts/prepare-upstream.sh
+packages/wordcraft-react TypeScript: createWordcraft() core, <WordcraftEditor />, and /collab (Yjs)
+examples/nextjs          Next.js App Router example, including /collab (co-editing) and its shared-file API
 scripts/build-wasm.sh    Builds the .wasm into packages/wordcraft-react/wasm
 scripts/sync-upstream.py Pins a newer upstream WordCraft commit, dependencies 1:1 with upstream
-examples/nextjs/smoke-test.mjs  Headless-browser test of the embedded editor and its API
+examples/nextjs/smoke-*.mjs     Headless-browser tests: the editor and its API, and two people co-editing
 docs/PLAN.md             Plan of action for the WordCraft and GridCraft packages
 ```
 
@@ -124,7 +174,7 @@ cd ../../examples/nextjs && npm install && npm run dev
 
 The **Upstream sync** workflow runs every morning (06:17 Nairobi time), and you can also start it by hand from the Actions tab. When storytold/wordcraft has new commits, it:
 
-1. pins the new commit and copies upstream's `Cargo.lock`, so every shared dependency matches upstream exactly;
+1. pins the new commit, re-applies `patches/` on top of it and copies upstream's `Cargo.lock`, so every shared dependency matches upstream exactly;
 2. rebuilds the WebAssembly and runs every check: Rust lints and tests, the package tests, the Next.js example build, and a headless-browser smoke test that starts the editor and exercises the API;
 3. if everything passes, bumps the patch version, commits, tags `vX.Y.Z` and publishes to npm through the Release workflow.
 

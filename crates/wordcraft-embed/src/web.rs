@@ -137,8 +137,14 @@ pub async fn mount(
                         app.apply_prefs(ui);
                     }
                 }
+                // Open the initial document now (not on the first frame), so it is in place before
+                // anything else, such as joining a co-editing session, looks at the document.
                 if let (Some(name), Some(bytes)) = (initial_name, initial_bytes) {
-                    creator_shared.inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, bytes));
+                    let data = wordcraft_engine::cmd::insert::base64_encode(&bytes);
+                    if let Err(e) = app.execute("file.open", json!({"path": name, "data": data})) {
+                        log::error!("couldn't open {name}: {e}");
+                    }
+                    app.session.dirty = false;
                 }
                 point_autosave(&creator_shared, &mut app);
                 creator_shared.last_rev.set(app.session.rev());

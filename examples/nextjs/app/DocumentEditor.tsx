@@ -78,7 +78,7 @@ export function DocumentEditor() {
         // Handy for poking at the API from the browser console: window.wordcraft.commands()
         onReady={(ed) => Object.assign(window, { wordcraft: ed })}
         onSave={async (file) => {
-          // Replace with an upload to your API, e.g. fetch('/api/documents/42', { method: 'PUT', body: file.bytes })
+          // Replace with an upload to your API, e.g. fetch('/api/documents/42', { method: 'PUT', body: file.blob })
           setLastSave(`${file.name} (${file.reason}, ${Math.round(file.bytes.byteLength / 1024)} KB)`);
         }}
       />
