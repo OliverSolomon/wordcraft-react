@@ -44,7 +44,7 @@ jobs:
       tag: ${{ steps.commit.outputs.tag }}
       mode: ${{ steps.mode.outputs.mode }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Mode
         id: mode
         run: |

@@ -37,7 +37,7 @@ runs:
         npm run smoke -- http://localhost:3000/
     - name: Keep screenshots
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: smoke-screenshots-${{ github.run_id }}-${{ github.run_attempt }}
         path: examples/nextjs/smoke-*.png
