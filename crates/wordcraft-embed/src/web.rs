@@ -13,7 +13,8 @@ use wasm_bindgen::prelude::*;
 use wordcraft_engine::Session;
 use wordcraft_ui_egui::{Inbox, Services, UiState, WordApp};
 
-use crate::{MountOptions, merge_json, mime_for};
+use crate::collab::{CollabState, Peer, parse_color};
+use crate::{MountOptions, autosave_name, merge_json, mime_for};
 
 const DOC_EXTS: &[&str] = &["docx", "docm", "dotx", "dotm", "doc", "dot", "odt", "rtf", "txt", "md", "html", "htm", "tex", "json"];
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
@@ -31,6 +32,16 @@ struct Shared {
     last_dirty: Cell<bool>,
     change_pending: Cell<bool>,
     unload_listener: RefCell<Option<UnloadListener>>,
+    /// The host keeps documents (has `onSave`), so AutoSave can write through it.
+    persist: Cell<bool>,
+    /// The document AutoSave was last pointed at (opening another one points it again).
+    autosave_doc: Cell<u64>,
+    /// A save handed over while this is set came from AutoSave (it runs in `logic`).
+    in_logic: Cell<bool>,
+    /// Real-time co-editing, while connected.
+    collab: RefCell<Option<CollabState>>,
+    on_collab_update: RefCell<Option<js_sys::Function>>,
+    on_collab_cursor: RefCell<Option<js_sys::Function>>,
 }
 
 impl Shared {
@@ -70,6 +81,12 @@ pub async fn mount(
         last_dirty: Cell::new(false),
         change_pending: Cell::new(false),
         unload_listener: RefCell::new(None),
+        persist: Cell::new(opts.persist),
+        autosave_doc: Cell::new(u64::MAX),
+        in_logic: Cell::new(false),
+        collab: RefCell::new(None),
+        on_collab_update: RefCell::new(None),
+        on_collab_cursor: RefCell::new(None),
     });
 
     let mut web_options = eframe::WebOptions::default();
@@ -108,8 +125,11 @@ pub async fn mount(
                 }
                 let doc = if opts.sample { wordcraft_engine::sample::sample_document() } else { wordcraft_doc::Document::new() };
                 let mut app = WordApp::new(Session::new(doc), services(&creator_shared, cc.egui_ctx.clone(), guard.clone()));
-                // The host owns persistence: no autosave, no localStorage writes behind its back.
-                app.autosave = false;
+                // AutoSave writes only through the host's onSave (never to browser storage).
+                app.autosave = opts.persist && opts.auto_save;
+                if let Some(name) = &opts.user_name {
+                    app.session.author = name.clone();
+                }
                 if let Some(p) = &opts.prefs {
                     let mut base = serde_json::to_value(app.prefs()).unwrap_or(Value::Null);
                     merge_json(&mut base, p);
@@ -120,6 +140,7 @@ pub async fn mount(
                 if let (Some(name), Some(bytes)) = (initial_name, initial_bytes) {
                     creator_shared.inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, bytes));
                 }
+                point_autosave(&creator_shared, &mut app);
                 creator_shared.last_rev.set(app.session.rev());
                 *creator_shared.app.borrow_mut() = Some(app);
                 *creator_shared.ctx.borrow_mut() = Some(cc.egui_ctx.clone());
@@ -130,6 +151,19 @@ pub async fn mount(
         .map_err(|e| err(format!("WordCraft failed to start (a browser with WebGPU or WebGL2 is required): {e:?}")))?;
 
     Ok(WordcraftHandle { shared, runner })
+}
+
+/// Point AutoSave at the current document when the host keeps documents. Upstream turns AutoSave's
+/// target off whenever another document opens, so this runs again after every frame.
+fn point_autosave(shared: &Shared, app: &mut WordApp) {
+    let id = app.session.document_id();
+    if !shared.persist.get() || shared.autosave_doc.get() == id {
+        return;
+    }
+    shared.autosave_doc.set(id);
+    let current = app.session.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string());
+    let name = autosave_name(current.as_deref(), &app.title_stem());
+    app.set_autosave_target(Some(std::path::PathBuf::from(name)));
 }
 
 /// The eframe app: borrows the shared `WordApp` for each frame and reports changes afterwards.
@@ -174,6 +208,50 @@ impl Shell {
     }
 }
 
+impl Shell {
+    /// Co-editing after each frame: share edits, run Undo/Redo, announce the caret, draw peers.
+    fn collab_frame(&self, app: &mut WordApp, ui: &egui::Ui) {
+        let Ok(mut guard) = self.shared.collab.try_borrow_mut() else { return };
+        let Some(st) = guard.as_mut() else { return };
+        let updates = st.after_frame(app);
+        let cursor = st.cursor_change(app);
+        app.collaborators = st.collaborators();
+        let clip = app.canvas.canvas_rect.unwrap_or_else(|| ui.max_rect());
+        st.paint(app, &ui.painter().with_clip_rect(clip));
+        drop(guard);
+        if updates.is_empty() && cursor.is_none() {
+            return;
+        }
+        let shared = self.shared.clone();
+        defer(move || {
+            let send = shared.on_collab_update.borrow().clone();
+            if let Some(send) = send {
+                for u in updates {
+                    if let Err(e) = send.call1(&JsValue::NULL, &js_sys::Uint8Array::from(u.as_slice())) {
+                        log::error!("wordcraft collaboration update handler threw: {e:?}");
+                    }
+                }
+            }
+            let announce = shared.on_collab_cursor.borrow().clone();
+            if let (Some(announce), Some(cursor)) = (announce, cursor) {
+                let v = match cursor {
+                    Some((a, h)) => {
+                        let o = js_sys::Object::new();
+                        let enc = wordcraft_engine::cmd::insert::base64_encode;
+                        js_sys::Reflect::set(&o, &"anchor".into(), &enc(&a).into()).ok();
+                        js_sys::Reflect::set(&o, &"head".into(), &enc(&h).into()).ok();
+                        JsValue::from(o)
+                    }
+                    None => JsValue::NULL,
+                };
+                if let Err(e) = announce.call1(&JsValue::NULL, &v) {
+                    log::error!("wordcraft collaboration cursor handler threw: {e:?}");
+                }
+            }
+        });
+    }
+}
+
 impl eframe::App for Shell {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
@@ -191,7 +269,10 @@ impl eframe::App for Shell {
                 }
             });
         }
+        // AutoSave runs inside `logic`; saves handed over meanwhile are tagged as AutoSaves.
+        self.shared.in_logic.set(true);
         self.with_app(|app| app.logic(ctx));
+        self.shared.in_logic.set(false);
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
@@ -202,6 +283,8 @@ impl eframe::App for Shell {
         let Ok(mut guard) = self.shared.app.try_borrow_mut() else { return };
         let Some(app) = guard.as_mut() else { return };
         app.ui(ui);
+        point_autosave(&self.shared, app);
+        self.collab_frame(app, ui);
         self.note_changes(app);
     }
 }
@@ -231,6 +314,7 @@ fn services(shared: &Rc<Shared>, ctx: egui::Context, guard: Option<Rc<Cell<bool>
         download: Some(Box::new(move |name: &str, bytes: &[u8]| {
             let name = file_name(name);
             let data = js_sys::Uint8Array::from(bytes);
+            let reason = if save_shared.in_logic.get() { "autosave" } else { "save" };
             let shared = save_shared.clone();
             defer(move || {
                 let cb = shared.on_save.borrow().clone();
@@ -240,6 +324,7 @@ fn services(shared: &Rc<Shared>, ctx: egui::Context, guard: Option<Rc<Cell<bool>
                         js_sys::Reflect::set(&file, &"name".into(), &name.as_str().into()).ok();
                         js_sys::Reflect::set(&file, &"mimeType".into(), &mime_for(&name).into()).ok();
                         js_sys::Reflect::set(&file, &"bytes".into(), &data).ok();
+                        js_sys::Reflect::set(&file, &"reason".into(), &reason.into()).ok();
                         if let Err(e) = cb.call1(&JsValue::NULL, &file) {
                             log::error!("wordcraft onSave handler threw: {e:?}");
                         }
@@ -501,6 +586,172 @@ impl WordcraftHandle {
         *self.shared.on_save.borrow_mut() = cb;
     }
 
+    /// Whether AutoSave is on (the title bar's toggle).
+    #[wasm_bindgen(js_name = isAutoSaving)]
+    pub fn is_auto_saving(&self) -> Result<bool, JsValue> {
+        self.with_app(|app| Ok(app.autosaves()))
+    }
+
+    /// Turn AutoSave on or off, as the title bar's toggle does. It needs the host to keep
+    /// documents (an `onSave` handler); without one it stays off.
+    #[wasm_bindgen(js_name = setAutoSave)]
+    pub fn set_auto_save(&self, on: bool) -> Result<bool, JsValue> {
+        let shared = self.shared.clone();
+        self.with_app(|app| {
+            point_autosave(&shared, app);
+            app.autosave = on && shared.persist.get();
+            Ok(app.autosaves())
+        })
+    }
+
+    /// Whether the host keeps documents (has an `onSave`), which AutoSave needs.
+    #[wasm_bindgen(js_name = setPersist)]
+    pub fn set_persist(&self, on: bool) -> Result<(), JsValue> {
+        self.shared.persist.set(on);
+        self.shared.autosave_doc.set(u64::MAX);
+        let shared = self.shared.clone();
+        self.with_app(|app| {
+            if on {
+                point_autosave(&shared, app);
+            } else {
+                app.autosave = false;
+            }
+            Ok(())
+        })
+    }
+
+    /// The person editing, as `{"name": ...}` JSON.
+    #[wasm_bindgen(js_name = getUser)]
+    pub fn get_user(&self) -> Result<String, JsValue> {
+        self.with_app(|app| Ok(json!({"name": app.session.author}).to_string()))
+    }
+
+    /// Set the person editing: their name signs new comments and tracked changes and shows on the
+    /// avatar in the title bar.
+    #[wasm_bindgen(js_name = setUserName)]
+    pub fn set_user_name(&self, name: &str) -> Result<(), JsValue> {
+        let name = name.trim().to_string();
+        self.with_app(|app| {
+            if name.is_empty() {
+                return Err("the user name can't be empty".into());
+            }
+            app.session.author = name;
+            Ok(())
+        })
+    }
+
+    /// Start co-editing. `state` is the shared document as one Yjs update
+    /// (`Y.encodeStateAsUpdate(ydoc)`), taken after the provider has synced. When it is empty,
+    /// the open document becomes the shared one (returns `true`); otherwise the shared document
+    /// replaces the open one (returns `false`). From then on, Undo and Redo take back only this
+    /// person's changes, as in Word.
+    #[wasm_bindgen(js_name = collabStart)]
+    pub fn collab_start(&self, client_id: f64, state: Option<Vec<u8>>) -> Result<bool, JsValue> {
+        let mut st = CollabState::new(client_id.max(1.0) as u64);
+        let collab = &self.shared.collab;
+        self.with_app(|app| {
+            let sel = [app.session.sel.anchor.clone(), app.session.sel.focus.clone()];
+            let merged = match state.filter(|s| !s.is_empty()) {
+                Some(s) => Some(st.c.apply_remote(&s, &sel).map_err(|e| e.to_string())?),
+                None => None,
+            };
+            let seeded = match merged {
+                Some((doc, sel)) if !st.c.is_empty() => {
+                    CollabState::install(app, doc, sel);
+                    app.session.dirty = false;
+                    false
+                }
+                _ => {
+                    st.c.seed(&app.session.doc);
+                    true
+                }
+            };
+            app.session.external_history = true;
+            app.session.history_requests.clear();
+            st.synced_rev = app.session.rev();
+            *collab.borrow_mut() = Some(st);
+            Ok(seeded)
+        })
+    }
+
+    /// Apply an update from the shared document (another person's edit).
+    #[wasm_bindgen(js_name = collabApply)]
+    pub fn collab_apply(&self, update: &[u8]) -> Result<(), JsValue> {
+        let collab = &self.shared.collab;
+        self.with_app(|app| {
+            let mut guard = collab.try_borrow_mut().map_err(|_| "busy".to_string())?;
+            let st = guard.as_mut().ok_or("not collaborating")?;
+            st.apply(app, update)
+        })
+    }
+
+    /// The whole shared document as one Yjs update.
+    #[wasm_bindgen(js_name = collabState)]
+    pub fn collab_state(&self) -> Result<Vec<u8>, JsValue> {
+        self.shared.collab.borrow().as_ref().map(|st| st.c.encode_state()).ok_or_else(|| err("not collaborating"))
+    }
+
+    /// Stop co-editing (the document stays as it is; Undo goes back to WordCraft's own history).
+    #[wasm_bindgen(js_name = collabStop)]
+    pub fn collab_stop(&self) -> Result<(), JsValue> {
+        *self.shared.collab.borrow_mut() = None;
+        self.with_app(|app| {
+            app.session.external_history = false;
+            app.session.history_requests.clear();
+            app.collaborators.clear();
+            Ok(())
+        })
+    }
+
+    /// `cb(update: Uint8Array)` for each local change to send to the shared document.
+    #[wasm_bindgen(js_name = setOnCollabUpdate)]
+    pub fn set_on_collab_update(&self, cb: Option<js_sys::Function>) {
+        *self.shared.on_collab_update.borrow_mut() = cb;
+    }
+
+    /// `cb({anchor, head} | null)` when this person's selection moves (base64 Yjs relative
+    /// positions, for awareness).
+    #[wasm_bindgen(js_name = setOnCollabCursor)]
+    pub fn set_on_collab_cursor(&self, cb: Option<js_sys::Function>) {
+        *self.shared.on_collab_cursor.borrow_mut() = cb;
+        if let Ok(mut g) = self.shared.collab.try_borrow_mut()
+            && let Some(st) = g.as_mut()
+        {
+            st.announced = None;
+        }
+        self.shared.repaint();
+    }
+
+    /// The other people here, as JSON `[{name, color?, anchor?, head?}]` (from awareness).
+    #[wasm_bindgen(js_name = setPeers)]
+    pub fn set_peers(&self, json: &str) -> Result<(), JsValue> {
+        let v: Value = serde_json::from_str(json).map_err(|e| err(format!("peers: {e}")))?;
+        let dec = |k: &str, p: &Value| p.get(k).and_then(Value::as_str).and_then(wordcraft_engine::cmd::insert::base64_decode);
+        let peers = v
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|p| {
+                        let name = p.get("name").and_then(Value::as_str).unwrap_or("Someone").to_string();
+                        Peer {
+                            color: parse_color(p.get("color").and_then(Value::as_str), &name),
+                            name,
+                            anchor: dec("anchor", p),
+                            head: dec("head", p),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Ok(mut g) = self.shared.collab.try_borrow_mut()
+            && let Some(st) = g.as_mut()
+        {
+            st.peers = peers;
+        }
+        self.shared.repaint();
+        Ok(())
+    }
+
     /// Did the editor hit an unrecoverable error? (It then stops drawing.)
     #[wasm_bindgen(js_name = hasPanicked)]
     pub fn has_panicked(&self) -> bool {
@@ -512,6 +763,11 @@ impl WordcraftHandle {
         self.runner.destroy();
         *self.shared.on_change.borrow_mut() = None;
         *self.shared.on_save.borrow_mut() = None;
+        *self.shared.on_collab_update.borrow_mut() = None;
+        *self.shared.on_collab_cursor.borrow_mut() = None;
+        if let Ok(mut c) = self.shared.collab.try_borrow_mut() {
+            *c = None;
+        }
         if let Ok(mut app) = self.shared.app.try_borrow_mut() {
             *app = None;
         }

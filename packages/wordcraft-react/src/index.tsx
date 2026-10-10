@@ -10,8 +10,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 
-import { createWordcraft } from './core.js';
-import type { ChangeInfo, DocumentSource, SavedFile, WordcraftEditor as Editor, WordcraftOptions, WordcraftPrefs } from './core.js';
+import { chromePrefs, createWordcraft } from './core.js';
+import type { ChangeInfo, Collaboration, DocumentSource, RibbonDisplay, SavedFile, WordcraftEditor as Editor, WordcraftOptions, WordcraftPrefs, WordcraftUser } from './core.js';
 
 export * from './core.js';
 
@@ -26,8 +26,29 @@ export interface WordcraftEditorProps {
   prefs?: Partial<WordcraftPrefs>;
   /** Shorthand for `prefs.dark`. */
   dark?: boolean;
-  /** Shorthand for `prefs.author` (comments and tracked changes). */
+  /**
+   * The person editing: `{ name, color? }`. The name shows on the avatar and signs comments and
+   * tracked changes. Changes apply live; read it back with `ref.current.getUser()`.
+   */
+  user?: WordcraftUser;
+  /** @deprecated Use `user={{ name }}`. */
   author?: string;
+  /**
+   * Start with AutoSave on (default true). AutoSave writes through `onSave` with
+   * `reason: 'autosave'` a couple of seconds after edits, and the title bar toggle switches it.
+   * Needs `onSave`. Changing the prop switches AutoSave.
+   */
+  autoSave?: boolean;
+  /** Show the title bar (AutoSave, Quick Access Toolbar, title, search, avatar). Default true. */
+  titleBar?: boolean;
+  /** Ribbon Display Options, as in Word: `full` (default), `tabs` (tabs only) or `hidden`. */
+  ribbon?: RibbonDisplay;
+  /**
+   * Real-time co-editing, e.g. `yjsCollaboration({ doc, provider })` from
+   * `@gamine/wordcraft-react/collab`. Keep it stable (create it once, or in `useMemo`): a new
+   * object reconnects.
+   */
+  collaboration?: Collaboration | null;
   /** Ask before the tab closes with unsaved changes. Read once, on mount. */
   guardUnload?: boolean;
   /** Where to load the `.wasm` from (CDN or `public/`). Read once, on mount. */
@@ -42,7 +63,10 @@ export interface WordcraftEditorProps {
   fallback?: ReactNode | ((error: Error) => ReactNode);
   onReady?: (editor: Editor) => void;
   onChange?: (info: ChangeInfo, editor: Editor) => void;
-  /** Save / Save As / Export in WordCraft's UI. Without it the browser downloads the file. */
+  /**
+   * Save / Save As / Export / AutoSave in WordCraft's UI (`file.reason` says which). Without it the
+   * browser downloads the file and AutoSave stays off.
+   */
   onSave?: (file: SavedFile, editor: Editor) => void | Promise<void>;
   onError?: (error: Error) => void;
 }
@@ -82,9 +106,11 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
       renderer: p.renderer,
       wasmUrl: p.wasmUrl,
       guardUnload: p.guardUnload,
+      user: userOf(p),
+      autoSave: p.autoSave,
       prefs: mergedPrefs(p),
       onChange: (info) => instance && latest.current.onChange?.(info, instance),
-      onSave: (file) => (instance ? latest.current.onSave?.(file, instance) : undefined),
+      onSave: p.onSave ? (file) => (instance ? latest.current.onSave?.(file, instance) : undefined) : undefined,
     })
       .then((ed) => {
         if (cancelled) {
@@ -115,6 +141,29 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
     if (!editor || editor.destroyed) return;
     editor.setOnSave(hasOnSave ? (file) => latest.current.onSave?.(file, editor) : null);
   }, [editor, hasOnSave]);
+
+  // The person editing.
+  const user = userOf(props);
+  const userKey = user ? JSON.stringify(user) : '';
+  useEffect(() => {
+    if (!editor || editor.destroyed || !userKey) return;
+    editor.setUser(JSON.parse(userKey) as WordcraftUser);
+  }, [editor, userKey]);
+
+  // Co-editing.
+  const collaboration = props.collaboration ?? null;
+  useEffect(() => {
+    if (!editor || editor.destroyed || !collaboration) return;
+    return collaboration.attach(editor);
+  }, [editor, collaboration]);
+
+  // AutoSave follows the prop when it changes (the title bar toggle can still switch it).
+  const firstAutoSave = useRef(props.autoSave);
+  useEffect(() => {
+    if (!editor || editor.destroyed || props.autoSave === undefined || props.autoSave === firstAutoSave.current) return;
+    firstAutoSave.current = props.autoSave;
+    editor.setAutoSave(props.autoSave);
+  }, [editor, props.autoSave]);
 
   // Live preference changes.
   const prefsKey = JSON.stringify(mergedPrefs(props));
@@ -147,8 +196,13 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
 function mergedPrefs(p: WordcraftEditorProps): Partial<WordcraftPrefs> {
   const out: Partial<WordcraftPrefs> = { ...(p.prefs ?? {}) };
   if (p.dark !== undefined) out.dark = p.dark;
-  if (p.author !== undefined) out.author = p.author;
-  return out;
+  return { ...out, ...chromePrefs(p.titleBar, p.ribbon) };
+}
+
+function userOf(p: WordcraftEditorProps): WordcraftUser | undefined {
+  if (p.user?.name?.trim()) return p.user;
+  if (p.author?.trim()) return { name: p.author };
+  return undefined;
 }
 
 function DefaultFallback({ error }: { error: Error }) {

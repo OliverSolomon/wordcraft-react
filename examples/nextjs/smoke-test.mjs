@@ -59,14 +59,42 @@ try {
   assert.equal(r.tab, 'Insert', 'prefs apply');
   assert.ok(r.badCommandThrows, 'unknown commands throw');
 
-  // Keyboard typing and Ctrl+S reaching the host's onSave.
+  // The person editing is configurable and readable.
+  assert.equal(await page.evaluate(() => window.wordcraft.getUser().name), 'Ada Lovelace', 'user name from props');
+  // AutoSave is on when the host has onSave.
+  assert.equal(await page.evaluate(() => window.wordcraft.isAutoSaving()), true, 'AutoSave on');
+
+  // Keyboard typing; AutoSave then writes through onSave by itself.
   await page.mouse.click(700, 500);
   await page.keyboard.type('Typed. ');
   await page.waitForTimeout(500);
   assert.ok(await page.evaluate(() => window.wordcraft.getText().includes('Typed.')), 'keyboard typing reaches the editor');
+  await page.waitForFunction(() => document.querySelector('[data-testid=status]')?.textContent?.includes('autosave'), null, { timeout: 20_000 });
+  await page.screenshot({ path: 'smoke-2-autosaved.png' });
+
+  // The AutoSave toggle in the title bar switches it off and on.
+  assert.equal(await page.evaluate(() => window.wordcraft.setAutoSave(false)), false, 'AutoSave off');
+  assert.equal(await page.evaluate(() => window.wordcraft.setAutoSave(true)), true, 'AutoSave back on');
+
+  // Ctrl+S reaches onSave as a save.
+  await page.mouse.click(700, 500);
   await page.keyboard.press('Control+S');
-  await page.waitForFunction(() => document.body.innerText.includes('last save:'), null, { timeout: 15_000 });
-  await page.screenshot({ path: 'smoke-2-after.png' });
+  await page.waitForFunction(() => document.querySelector('[data-testid=status]')?.textContent?.includes('(save'), null, { timeout: 15_000 });
+
+  // Renaming the user applies live.
+  await page.fill('input[aria-label="Your name"]', 'Grace Hopper');
+  await page.waitForFunction(() => window.wordcraft.getUser().name === 'Grace Hopper', null, { timeout: 5_000 });
+
+  // Title bar and ribbon can be hidden, like Word's Ribbon Display Options.
+  await page.click('text=Title bar');
+  await page.selectOption('select[aria-label="Ribbon display"]', 'hidden');
+  await page.waitForFunction(() => window.wordcraft.getPrefs().hideTitleBar === true && window.wordcraft.getPrefs().hideRibbon === true, null, { timeout: 5_000 });
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: 'smoke-3-no-chrome.png' });
+  await page.selectOption('select[aria-label="Ribbon display"]', 'tabs');
+  await page.waitForFunction(() => window.wordcraft.getPrefs().ribbonCollapsed === true && window.wordcraft.getPrefs().hideRibbon === false, null, { timeout: 5_000 });
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: 'smoke-4-tabs-only.png' });
   console.log('smoke test passed');
 } catch (e) {
   failed = true;

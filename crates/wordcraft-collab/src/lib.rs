@@ -487,7 +487,13 @@ fn blocks_identical(a: &Blocks, b: &Blocks) -> bool {
 
 /// The document's fields that are shared as one value each.
 fn meta_of(doc: &Document) -> BTreeMap<String, Value> {
-    let mut m = entries(&to_json(doc));
+    // Serialise without the (large, separately shared) stories: blocks are behind `Arc`s, so
+    // the clone is cheap.
+    let mut d = doc.clone();
+    d.body = Vec::new();
+    d.parts = BTreeMap::new();
+    d.comments = BTreeMap::new();
+    let mut m = entries(&to_json(&d));
     for k in STRUCTURED {
         m.remove(*k);
     }

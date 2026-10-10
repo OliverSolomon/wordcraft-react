@@ -30,8 +30,12 @@ export interface WordcraftPrefs {
   dark: boolean;
   /** Pages drawn dark too (View > Switch Modes). */
   darkPage: boolean;
-  /** Collapse the ribbon to its tab row. */
+  /** Collapse the ribbon to its tab row (Word's "Show tabs only"). */
   ribbonCollapsed: boolean;
+  /** Hide the ribbon including its tabs (Word's "Auto-hide Ribbon"). */
+  hideRibbon: boolean;
+  /** Hide the title bar: AutoSave, Quick Access Toolbar, title, search and the account avatar. */
+  hideTitleBar: boolean;
   /** `auto` or a language code (`en`, `ja`, `pt-br`, `uk`, `zh-hant`, ...). */
   language: string;
   /** Author name used for comments and tracked changes. */
@@ -50,11 +54,83 @@ export interface ChangeInfo {
   dirty: boolean;
 }
 
-/** A file produced by Save, Save As or Export in WordCraft's own UI. */
+/** A file produced by Save, Save As, Export or AutoSave in WordCraft's own UI. */
 export interface SavedFile {
   name: string;
   mimeType: string;
   bytes: Uint8Array;
+  /** `autosave` when AutoSave wrote it (a couple of seconds after edits), else `save`. */
+  reason: 'save' | 'autosave';
+}
+
+/** The person editing. */
+export interface WordcraftUser {
+  /** Shown on the avatar (as initials) and signs comments and tracked changes. */
+  name: string;
+  /** Colour for this person's cursor and avatar when collaborating, e.g. `#d9480f`. */
+  color?: string;
+  /** A stable id for this person (collaboration); defaults to the name. */
+  id?: string;
+}
+
+/** A selection as base64 Yjs relative positions (shared through awareness). */
+export interface CollabCursor {
+  anchor: string;
+  head: string;
+}
+
+/** Someone else in the document, as the editor draws them. */
+export interface CollabPeer {
+  name: string;
+  color?: string;
+  anchor?: string | null;
+  head?: string | null;
+}
+
+/**
+ * The editor's low-level co-editing port. `@gamine/wordcraft-react/collab` connects it to a
+ * Yjs document and awareness; use it directly only to bridge another sync system.
+ */
+export interface CollabPort {
+  /**
+   * Join with the shared state (one Yjs update, after the provider synced). Returns `true` when
+   * the shared document was empty and the open document was put into it.
+   */
+  start(clientId: number, state: Uint8Array | null): boolean;
+  /** Apply a remote update. */
+  apply(update: Uint8Array): void;
+  /** The whole shared state as one Yjs update. */
+  state(): Uint8Array;
+  /** Leave (the document stays; Undo returns to WordCraft's own history). */
+  stop(): void;
+  /** Local changes to broadcast. */
+  onUpdate(cb: ((update: Uint8Array) => void) | null): void;
+  /** This person's selection, when it moves. */
+  onCursor(cb: ((cursor: CollabCursor | null) => void) | null): void;
+  /** Who else is here, with their selections (drawn on the pages and in the title bar). */
+  setPeers(peers: CollabPeer[]): void;
+}
+
+/**
+ * Something that connects an editor to collaborators, e.g. `yjsCollaboration({ doc, provider })`
+ * from `@gamine/wordcraft-react/collab`. `attach` returns a function that disconnects.
+ */
+export interface Collaboration {
+  attach(editor: WordcraftEditor): () => void;
+}
+
+/** Word's Ribbon Display Options. */
+export type RibbonDisplay = 'full' | 'tabs' | 'hidden';
+
+/** The UI preferences that show or hide the title bar and ribbon. */
+export function chromePrefs(titleBar: boolean | undefined, ribbon: RibbonDisplay | undefined): Partial<WordcraftPrefs> {
+  const out: Partial<WordcraftPrefs> = {};
+  if (titleBar !== undefined) out.hideTitleBar = !titleBar;
+  if (ribbon !== undefined) {
+    out.hideRibbon = ribbon === 'hidden';
+    out.ribbonCollapsed = ribbon === 'tabs';
+  }
+  return out;
 }
 
 /** A command from WordCraft's registry (the same ids the ribbon, shortcuts and MCP use). */
@@ -88,6 +164,18 @@ export interface WordcraftOptions {
   wasmUrl?: string | URL;
   /** Ask before the browser tab closes or navigates away with unsaved changes. Off by default. */
   guardUnload?: boolean;
+  /** The person editing. Their name signs comments and tracked changes and shows on the avatar. */
+  user?: WordcraftUser;
+  /**
+   * Start with AutoSave on. AutoSave writes the document through `onSave` (with
+   * `reason: 'autosave'`) a couple of seconds after edits, as Word does for cloud files, and
+   * people can switch it with the toggle in the title bar. Needs `onSave`. Default: on.
+   */
+  autoSave?: boolean;
+  /** Show the title bar (AutoSave, Quick Access Toolbar, title, search, avatar). Default: true. */
+  titleBar?: boolean;
+  /** Ribbon Display Options: `full` (default), `tabs` (tabs only) or `hidden`. */
+  ribbon?: RibbonDisplay;
   /** Called after edits (coalesced to at most once per frame). */
   onChange?: (info: ChangeInfo) => void;
   /**
@@ -119,6 +207,16 @@ export interface WordcraftEditor {
   getSelectedText(): string;
   /** Open the browser's print dialog on the document (File > Print). */
   print(): void;
+  /** The person editing. */
+  getUser(): WordcraftUser;
+  /** Change the person editing (name on the avatar, comments and tracked changes). */
+  setUser(user: WordcraftUser): void;
+  /** Low-level co-editing port (see `@gamine/wordcraft-react/collab`). */
+  readonly collab: CollabPort;
+  /** Whether AutoSave is on. */
+  isAutoSaving(): boolean;
+  /** Turn AutoSave on or off (needs `onSave`); returns whether it is now on. */
+  setAutoSave(on: boolean): boolean;
   /** Run any WordCraft command by id, e.g. `execute('format.bold')`, `execute('text.insert', { text: 'Hi' })`. */
   execute<T = unknown>(command: string, params?: Record<string, unknown>): T;
   /** Every command in WordCraft's registry. */
@@ -167,6 +265,18 @@ interface RawHandle {
   setOnChange(cb: ((info: ChangeInfo) => void) | null): void;
   setOnSave(cb: ((file: SavedFile) => void) | null): void;
   hasPanicked(): boolean;
+  getUser(): string;
+  setUserName(name: string): void;
+  isAutoSaving(): boolean;
+  setAutoSave(on: boolean): boolean;
+  setPersist(on: boolean): void;
+  collabStart(clientId: number, state: Uint8Array | null): boolean;
+  collabApply(update: Uint8Array): void;
+  collabState(): Uint8Array;
+  collabStop(): void;
+  setOnCollabUpdate(cb: ((update: Uint8Array) => void) | null): void;
+  setOnCollabCursor(cb: ((cursor: CollabCursor | null) => void) | null): void;
+  setPeers(json: string): void;
   destroy(): void;
   free?(): void;
 }
@@ -261,7 +371,10 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     sample: !!options.sample,
     renderer: options.renderer ?? 'auto',
     guardUnload: !!options.guardUnload,
-    prefs: { ...DEFAULT_PREFS, ...(options.prefs ?? {}) },
+    persist: !!options.onSave,
+    autoSave: options.autoSave ?? true,
+    user: options.user ? { name: options.user.name } : undefined,
+    prefs: { ...DEFAULT_PREFS, ...(options.prefs ?? {}), ...chromePrefs(options.titleBar, options.ribbon) },
   });
 
   let raw: RawHandle;
@@ -292,9 +405,38 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
 
   raw.setOnChange(options.onChange ?? null);
   raw.setOnSave(wrapSave(options.onSave));
+  let user: WordcraftUser = options.user ? { ...options.user } : { name: (JSON.parse(raw.getUser()) as { name: string }).name };
+
+  const collab: CollabPort = {
+    start(clientId, state) {
+      alive();
+      return raw.collabStart(clientId, state);
+    },
+    apply(update) {
+      alive();
+      raw.collabApply(update);
+    },
+    state() {
+      alive();
+      return raw.collabState();
+    },
+    stop() {
+      if (!destroyed) raw.collabStop();
+    },
+    onUpdate(cb) {
+      if (!destroyed) raw.setOnCollabUpdate(cb);
+    },
+    onCursor(cb) {
+      if (!destroyed) raw.setOnCollabCursor(cb);
+    },
+    setPeers(peers) {
+      if (!destroyed) raw.setPeers(JSON.stringify(peers));
+    },
+  };
 
   const editor: WordcraftEditor = {
     canvas,
+    collab,
     async load(source) {
       alive();
       const name = source.name;
@@ -341,6 +483,22 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     print() {
       editor.execute('ui.print');
     },
+    getUser() {
+      return { ...user };
+    },
+    setUser(next) {
+      alive();
+      raw.setUserName(next.name);
+      user = { ...next, name: next.name.trim() };
+    },
+    isAutoSaving() {
+      alive();
+      return raw.isAutoSaving();
+    },
+    setAutoSave(on) {
+      alive();
+      return raw.setAutoSave(on);
+    },
     undo() {
       editor.execute('edit.undo');
     },
@@ -386,6 +544,7 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     setOnSave(cb) {
       alive();
       raw.setOnSave(wrapSave(cb));
+      raw.setPersist(!!cb);
     },
     get destroyed() {
       return destroyed || raw.hasPanicked();

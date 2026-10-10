@@ -14,6 +14,8 @@
 #![forbid(unsafe_code)]
 
 #[cfg(target_arch = "wasm32")]
+mod collab;
+#[cfg(target_arch = "wasm32")]
 mod web;
 
 #[cfg(target_arch = "wasm32")]
@@ -30,6 +32,12 @@ pub struct MountOptions {
     pub prefs: Option<serde_json::Value>,
     /// Ask before the tab closes with unsaved changes (upstream's leave-page guard).
     pub guard_unload: bool,
+    /// The host keeps documents itself (it has an `onSave`): AutoSave can write through it.
+    pub persist: bool,
+    /// AutoSave starts on (only meaningful with `persist`).
+    pub auto_save: bool,
+    /// The person editing: their name signs comments and tracked changes and shows on the avatar.
+    pub user_name: Option<String>,
 }
 
 impl MountOptions {
@@ -43,6 +51,15 @@ impl MountOptions {
             sample: flag("sample"),
             prefs: v.get("prefs").filter(|p| p.is_object()).cloned(),
             guard_unload: flag("guardUnload"),
+            persist: flag("persist"),
+            auto_save: flag("autoSave"),
+            user_name: v
+                .get("user")
+                .and_then(|u| u.get("name"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .map(str::to_string),
         }
     }
 }
@@ -53,6 +70,20 @@ pub fn merge_json(base: &mut serde_json::Value, patch: &serde_json::Value) {
         for (k, v) in p {
             b.insert(k.clone(), v.clone());
         }
+    }
+}
+
+/// The file AutoSave writes for a document shown as `title`: always a format that keeps
+/// everything (a `.docx` unless the document already is a Word or OpenDocument file).
+pub fn autosave_name(current: Option<&str>, title: &str) -> String {
+    let keeps = |n: &str| {
+        let ext = n.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+        matches!(ext.as_str(), "docx" | "docm" | "dotx" | "dotm" | "odt" | "rtf")
+    };
+    match current {
+        Some(n) if keeps(n) => n.to_string(),
+        Some(n) => format!("{}.docx", n.rsplit_once('.').map_or(n, |(stem, _)| stem)),
+        None => format!("{}.docx", if title.trim().is_empty() { "Document1" } else { title.trim() }),
     }
 }
 
@@ -87,6 +118,10 @@ mod tests {
         let o = MountOptions::parse(r#"{"renderer":"webgl","sample":true,"prefs":{"dark":true},"extra":1}"#);
         assert!(o.webgl && o.sample && !o.guard_unload);
         assert!(MountOptions::parse(r#"{"guardUnload":true}"#).guard_unload);
+        let saving = MountOptions::parse(r#"{"persist":true,"autoSave":true,"user":{"name":"  Ada Lovelace "}}"#);
+        assert!(saving.persist && saving.auto_save);
+        assert_eq!(saving.user_name.as_deref(), Some("Ada Lovelace"));
+        assert_eq!(MountOptions::parse(r#"{"user":{"name":"  "}}"#).user_name, None);
         assert_eq!(o.prefs, Some(serde_json::json!({"dark": true})));
         assert_eq!(MountOptions::parse(r#"{"prefs":3}"#).prefs, None);
     }
@@ -96,6 +131,14 @@ mod tests {
         let mut a = serde_json::json!({"tab": "home", "dark": false});
         merge_json(&mut a, &serde_json::json!({"dark": true}));
         assert_eq!(a, serde_json::json!({"tab": "home", "dark": true}));
+    }
+
+    #[test]
+    fn autosave_names_keep_everything() {
+        assert_eq!(autosave_name(None, "Document1"), "Document1.docx");
+        assert_eq!(autosave_name(Some("notes.md"), "notes"), "notes.docx");
+        assert_eq!(autosave_name(Some("brief.odt"), "brief"), "brief.odt");
+        assert_eq!(autosave_name(None, "  "), "Document1.docx");
     }
 
     #[test]
