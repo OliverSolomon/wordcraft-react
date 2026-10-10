@@ -1,0 +1,20 @@
+{
+  "name": "wordcraft-react-nextjs-example",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@gamine/wordcraft-react": "file:../../packages/wordcraft-react",
+    "next": "15.5.4",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "@types/react": "^19.1.12",
+    "typescript": "^5.6.3"
+  }
+}
