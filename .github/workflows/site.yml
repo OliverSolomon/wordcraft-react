@@ -25,19 +25,28 @@ jobs:
   build:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.pkg.outputs.skip }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      - name: Use the version published on npm
+      - name: Use the version in this commit, once it is on npm
+        id: pkg
         working-directory: site
         run: |
-          v=$(npm view @gamine/wordcraft-react version)
+          v=$(node -p "require('../packages/wordcraft-react/package.json').version")
+          if [ -z "$(npm view "@gamine/wordcraft-react@$v" version 2>/dev/null)" ]; then
+            echo "::notice::@gamine/wordcraft-react@$v is not on npm yet; the site builds after the Release workflow publishes it."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           echo "Building the site with @gamine/wordcraft-react@$v"
           npm pkg set "dependencies.@gamine/wordcraft-react=$v"
           npm install --no-audit --no-fund
       - name: Build
+        if: steps.pkg.outputs.skip != 'true'
         working-directory: site
         env:
           NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
@@ -45,17 +54,20 @@ jobs:
           npm run typecheck
           npm run build
           touch out/.nojekyll
-      - name: Turn on GitHub Pages (Settings > Pages > Source: GitHub Actions, if this can't)
+      - name: Turn on GitHub Pages if it is off (or set Settings, Pages, Source to GitHub Actions)
+        if: steps.pkg.outputs.skip != 'true'
         uses: actions/configure-pages@v5
         continue-on-error: true
         with:
           enablement: true
       - uses: actions/upload-pages-artifact@v4
+        if: steps.pkg.outputs.skip != 'true'
         with:
           path: site/out
 
   deploy:
     needs: build
+    if: needs.build.outputs.skip != 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
