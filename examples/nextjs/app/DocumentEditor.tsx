@@ -14,6 +14,8 @@ export function DocumentEditor() {
   const [lastSave, setLastSave] = useState<string>('');
   const [mode, setMode] = useState<EditorMode>('editing');
   const [lean, setLean] = useState(false);
+  // Where AI answers come from: this app's /api/ai route, or only people's own API keys.
+  const [aiSource, setAiSource] = useState<'app' | 'own' | 'off'>('app');
 
   const download = (format: 'docx' | 'pdf' | 'odt' | 'md') => {
     const blob = editor.current?.exportBlob(format);
@@ -73,6 +75,14 @@ export function DocumentEditor() {
         <label>
           <input type="checkbox" checked={lean} onChange={(e) => setLean(e.target.checked)} /> Hide Mailings, Zotero, Open
         </label>
+        <label>
+          AI{' '}
+          <select aria-label="AI" value={aiSource} onChange={(e) => setAiSource(e.target.value as 'app' | 'own' | 'off')} style={btn}>
+            <option value="app">App endpoint (+ own keys)</option>
+            <option value="own">Own API keys only</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
         <span data-testid="status" style={{ color: '#555' }}>
           rev {status.rev} · {status.dirty ? 'unsaved changes' : 'saved'} {lastSave && `· last save: ${lastSave}`}
         </span>
@@ -88,7 +98,7 @@ export function DocumentEditor() {
         mode={mode}
         hiddenTabs={lean ? ['Mailings', 'Zotero'] : []}
         disabledCommands={lean ? ['file.open'] : []}
-        ai={ai}
+        ai={aiSource === 'app' ? ai : aiSource === 'own' ? true : null}
         autoSave
         height="calc(100vh - 110px)"
         style={{ borderRadius: 8, border: '1px solid #ddd' }}

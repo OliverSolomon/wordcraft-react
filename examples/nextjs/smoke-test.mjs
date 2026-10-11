@@ -116,16 +116,69 @@ try {
   assert.ok(openRefused, 'turned-off commands are refused');
   await page.click('text=Hide Mailings, Zotero, Open');
 
-  // The AI bar (the example's /api/ai streams a canned answer when WORDCRAFT_FAKE_AI=1).
+  // AI (an Extra): the sparkle at the bottom centre opens the bar; /api/ai streams a canned answer
+  // when WORDCRAFT_FAKE_AI=1. AI Studio's Humaniser is on by default and reaches the request.
   if (process.env.WORDCRAFT_FAKE_AI === '1') {
     await page.evaluate(() => window.wordcraft.execute('caret.docEnd'));
-    await page.click('text=Help me write');
+    await page.click('.wcai-launch');
+    await page.waitForSelector('[role=dialog] textarea', { timeout: 5_000 });
+    await page.screenshot({ path: 'smoke-ai-bar.png' });
     await page.fill('[role=dialog] textarea', 'one sentence');
     await page.keyboard.press('Enter');
-    await page.waitForFunction(() => document.querySelector('[role=dialog]')?.textContent?.includes('test model'), null, { timeout: 15_000 });
+    await page.waitForFunction(() => document.querySelector('[role=dialog]')?.textContent?.includes('with the Humaniser'), null, { timeout: 15_000 });
     await page.click('[role=dialog] button:has-text("Insert")');
     await page.waitForFunction(() => window.wordcraft.getText().includes('written by the test model'), null, { timeout: 5_000 });
+    await page.waitForSelector('.wcai-launch', { timeout: 5_000 });
+
+    // AI Studio: a palette recolours the headings and a letterhead fills the header.
+    await page.click('.wcai-launch');
+    await page.click('[aria-label="AI Studio"]');
+    await page.click('.wcai-tab:has-text("Palette")');
+    await page.click('.wcai-palette:has-text("Forest")');
+    await page.click('button:has-text("Apply to headings")');
+    await page.click('.wcai-tab:has-text("Letterhead")');
+    await page.fill('input[placeholder="e.g. Open Studio Collective"]', 'Smoke Test Collective');
+    await page.click('button:has-text("Apply to document")');
+    await page.waitForFunction(() => document.querySelector('.wcai-note-inline')?.textContent?.includes('added'), null, { timeout: 5_000 });
+    await page.screenshot({ path: 'smoke-ai-studio.png' });
+    await page.click('[aria-label="Close AI Studio"]');
+    await page.click('[aria-label="More options"]');
+    await page.click('.wcai-item:has-text("Close")');
+    await page.waitForSelector('.wcai-launch', { timeout: 5_000 });
+
+    // Own keys only: the sparkle asks for a key, then calls the provider straight from the browser.
+    let auth = '';
+    let system = '';
+    await page.route('https://openrouter.ai/api/v1/chat/completions', async (route) => {
+      auth = route.request().headers()['authorization'] ?? '';
+      system = JSON.parse(route.request().postData() ?? '{}').messages?.[0]?.content ?? '';
+      const ev = (t) => `data: ${JSON.stringify({ choices: [{ delta: { content: t } }] })}\n\n`;
+      await route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream', 'access-control-allow-origin': '*' }, body: ev('Written with ') + ev('my own key.') + 'data: [DONE]\n\n' });
+    });
+    await page.selectOption('select[aria-label="AI"]', 'own');
+    await page.click('.wcai-launch');
+    await page.fill('[role=dialog] input[type=password]', 'sk-or-test');
+    await page.click('[role=dialog] button:has-text("Save")');
+    await page.fill('[role=dialog] textarea', 'a closing line');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('[role=dialog]')?.textContent?.includes('my own key'), null, { timeout: 15_000 });
+    assert.equal(auth, 'Bearer sk-or-test', 'own key sent to the provider');
+    assert.ok(system.includes('Humaniser') && system.includes('Smoke Test Collective'), 'skills and letterhead reach the system prompt');
+    await page.click('[role=dialog] button:has-text("Insert")');
+    await page.waitForFunction(() => window.wordcraft.getText().includes('Written with my own key.'), null, { timeout: 5_000 });
+    await page.evaluate(() => localStorage.removeItem('wordcraft.ai'));
+    await page.selectOption('select[aria-label="AI"]', 'app');
   }
+
+  // Word's ribbon collapse: ^ leaves the tabs and ruler; a tab click opens it over the page.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.mouse.move(1365, 279);
+  await page.waitForTimeout(300);
+  await page.mouse.click(1365, 279);
+  await page.waitForFunction(() => window.wordcraft.getPrefs().ribbonCollapsed === true, null, { timeout: 5_000 });
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: 'smoke-collapsed.png' });
+  await page.evaluate(() => window.wordcraft.setPrefs({ ribbonCollapsed: false }));
 
   // A web font loads on demand and is used.
   if (process.env.SMOKE_FONTS !== '0') {
@@ -149,7 +202,7 @@ try {
   console.log('smoke test passed');
 } catch (e) {
   failed = true;
-  console.error('smoke test FAILED:', e.message);
+  console.error('smoke test FAILED:', e.stack ?? e.message);
   await page.screenshot({ path: 'smoke-failure.png' }).catch(() => {});
   console.error(logs.slice(-40).join('\n'));
 } finally {

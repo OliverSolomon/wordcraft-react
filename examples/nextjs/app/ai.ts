@@ -1,6 +1,10 @@
 import type { AiOptions } from '@gamine/wordcraft-react';
 
-/** The AI bar's options for these examples: stream text from /api/ai (Claude). */
+/**
+ * The AI bar's options for these examples: stream text from /api/ai (Claude, with the key on the
+ * server). People can still add their own OpenRouter/OpenAI/Anthropic/Gemini key in the bar's
+ * settings; pass `allowUserKey: false` to turn that off.
+ */
 export const ai: AiOptions = {
   async *complete({ signal, ...request }) {
     const res = await fetch('/api/ai', { method: 'POST', body: JSON.stringify(request), signal });

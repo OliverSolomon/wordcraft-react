@@ -16,8 +16,9 @@ import type { AiOptions } from './ai.js';
 import type { ChangeInfo, Collaboration, DocumentSource, EditorMode, FontSource, RibbonDisplay, RibbonTab, SavedFile, WordcraftEditor as Editor, WordcraftOptions, WordcraftPrefs, WordcraftUser } from './core.js';
 
 export * from './core.js';
-export { AiBar, insertText } from './ai.js';
-export type { AiBarProps, AiOptions } from './ai.js';
+export { AiBar, AiStar, ExtraTag, aiReady, insertText, AI_PROVIDERS, completeWith } from './ai.js';
+export * from './ai-studio.js';
+export type { AiBarProps, AiOptions, AiProviderConfig, AiProviderId } from './ai.js';
 
 export interface WordcraftEditorProps {
   /** Document to open when the editor mounts. Changing it later loads the new document. */
@@ -64,10 +65,16 @@ export interface WordcraftEditorProps {
   /** Fonts offered on demand; default the Google Fonts library, `false` for built-in fonts only. Read once. */
   fonts?: FontSource | FontSource[] | false;
   /**
-   * An AI writing bar at the bottom of the editor, like Google Docs' "Help me write".
-   * `complete` is your function (usually your own API route), so any model works.
+   * AI writing (an Extra: not part of Microsoft Word or WordCraft), like Gemini in Google Docs: a
+   * sparkle at the bottom centre opens a prompt bar, with AI Studio for skills (Humaniser on by
+   * default), letterheads, palettes and the model. Answers come from `complete` (your function,
+   * e.g. your API route), a `provider` with a key, or the person's own OpenRouter, OpenAI,
+   * Anthropic or Gemini key. `true` means only people's own keys.
    */
-  ai?: AiOptions | null;
+  ai?: AiOptions | boolean | null;
+  /** Open or close the AI bar (controlled). Leave unset to let the star button toggle it. */
+  aiOpen?: boolean;
+  onAiOpenChange?: (open: boolean) => void;
   /** Ask before the tab closes with unsaved changes. Read once, on mount. */
   guardUnload?: boolean;
   /** Where to load the `.wasm` from (CDN or `public/`). Read once, on mount. */
@@ -104,6 +111,13 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
   const containerRef = useRef<HTMLDivElement>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [error, setError] = useState<Error | null>(null);
+  const [aiOpenState, setAiOpenState] = useState(false);
+  const aiOpen = props.aiOpen ?? aiOpenState;
+  const setAiOpen = (v: boolean) => {
+    setAiOpenState(v);
+    latest.current.onAiOpenChange?.(v);
+  };
+  const ai: AiOptions | null = props.ai === true ? {} : props.ai ? props.ai : null;
 
   // Latest props for callbacks, so changing a handler never remounts the editor.
   const latest = useRef(props);
@@ -131,6 +145,7 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
       disabledCommands: p.disabledCommands,
       fonts: p.fonts,
       prefs: mergedPrefs(p),
+      aiButton: !!(p.ai && p.ai !== true && p.ai.ribbonButton),
       onChange: (info) => instance && latest.current.onChange?.(info, instance),
       onSave: p.onSave ? (file) => (instance ? latest.current.onSave?.(file, instance) : undefined) : undefined,
     })
@@ -171,6 +186,16 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
     if (!editor || editor.destroyed || !userKey) return;
     editor.setUser(JSON.parse(userKey) as WordcraftUser);
   }, [editor, userKey]);
+
+  // The ribbon's sparkle (when asked for) opens and closes the AI bar.
+  const hasAi = !!ai?.ribbonButton;
+  const aiOpenRef = useRef(aiOpen);
+  aiOpenRef.current = aiOpen;
+  useEffect(() => {
+    if (!editor || editor.destroyed) return;
+    editor.setAiButton(hasAi);
+    editor.setOnAiButton(hasAi ? () => setAiOpen(!aiOpenRef.current) : null);
+  }, [editor, hasAi]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Co-editing.
   const collaboration = props.collaboration ?? null;
@@ -221,7 +246,16 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
       style={{ position: 'relative', width: '100%', height, overflow: 'hidden', ...style }}
     >
       {!editor && !error && loading}
-      {editor && props.ai && <AiBar editor={editor} options={props.ai} dark={props.dark ?? props.prefs?.dark} />}
+      {editor && ai && (
+        <AiBar
+          editor={editor}
+          options={ai}
+          open={aiOpen}
+          onOpenChange={setAiOpen}
+          launcher={ai.launcher !== 'none'}
+          dark={props.dark ?? props.prefs?.dark}
+        />
+      )}
       {error && (typeof fallback === 'function' ? fallback(error) : (fallback ?? <DefaultFallback error={error} />))}
     </div>
   );

@@ -48,12 +48,12 @@ A complete example app lives in [`examples/nextjs`](examples/nextjs).
 | `user` | `{ name, color?, id? }` | The person editing. The name shows on the title bar avatar and signs comments and tracked changes; `color` is their cursor colour when co-editing. Changes apply live; read it back with `editor.getUser()`. |
 | `autoSave` | `boolean` | AutoSave starts on (default) or off. It writes through `onSave` with `reason: 'autosave'` a couple of seconds after edits, and the title bar toggle switches it, as in Word. Needs `onSave`. |
 | `titleBar` | `boolean` | `false` hides the title bar (AutoSave, Quick Access Toolbar, title, search, avatar). |
-| `ribbon` | `'full' \| 'tabs' \| 'hidden'` | Word's Ribbon Display Options: always show, show tabs only, or hide the ribbon completely. |
+| `ribbon` | `'full' \| 'tabs' \| 'hidden'` | Word's Ribbon Display Options: always show, show tabs only, or hide the ribbon completely. People can also collapse the ribbon with the ^ at its corner (leaving the title bar, tabs and ruler), open a tab's commands over the page by clicking it, and pin the ribbon back. |
 | `tabs`, `hiddenTabs` | `RibbonTab[]` | Which ribbon tabs to offer: `File`, `Home`, `Insert`, `Draw`, `Design`, `Layout`, `References`, `Mailings`, `Review`, `View`, `Zotero`, `Help`. Contextual tabs (Table Design, Picture Format…) still appear when needed. Applied live. |
 | `mode` | `'editing' \| 'reviewing' \| 'viewing'` | Word's mode switch. Reviewing turns on Track Changes; Viewing allows reading, copying, printing and exporting but no changes. People can also switch it from the button beside Comments. |
 | `disabledCommands` | `string[]` | Commands to turn off, by id from `editor.commands()` or by prefix (`'mailings.*'`, `'file.open'`). They're greyed in the ribbon and refused from shortcuts, menus and `execute`. |
 | `fonts` | `FontSource \| FontSource[] \| false` | Fonts offered in the font box on demand. The default is `googleFonts()`, the whole Google Fonts library, fetched when first picked or when a document uses one. `false` keeps to the built-in fonts. |
-| `ai` | `{ complete, label?, placement? }` | An AI writing bar at the bottom, like Google Docs' "Help me write". See [AI](#ai). |
+| `ai` ✦ Extra | `AiOptions` or `true` | A sparkle at the bottom centre opens a Gemini-style AI bar with AI Studio (skills with the Humaniser on by default, letterheads, palettes, model). Works with your endpoint, a provider key, or people's own OpenRouter/OpenAI/Anthropic/Gemini key. See [AI](#ai-extra). |
 | `collaboration` | | Real-time co-editing, e.g. `yjsCollaboration({ doc, provider })`. See [Co-editing](#co-editing). |
 | `dark`, `prefs` | | UI preferences, applied live: ribbon `tab`, `dark`, `darkPage`, `language`, `showDiscord`. |
 | `renderer` | `'auto' \| 'webgl'` | Uses WebGPU and falls back to WebGL2. Pass `webgl` to force WebGL2. |
@@ -143,11 +143,41 @@ import { googleFonts } from '@gamine/wordcraft-react';
 <WordcraftEditor fonts={false} />                                                    // built-in fonts only
 ```
 
-## AI
+## Extras
 
-`ai` adds a "Help me write" bar at the bottom of the editor, like Google Docs. People describe what to write, or pick a quick action for the selected text (rewrite, shorten, elaborate, more formal or casual, fix spelling and grammar, summarize). They see the answer stream in, then insert it, replace the selection, try again or discard it. The package never calls an AI service itself. `complete` is your function, so any model or provider works, and your API key stays on your server.
+Everything in this package matches Word and WordCraft, except features marked **✦ Extra**. Extras are additions of this package and are not part of Microsoft Word or WordCraft. In the editor they carry an *Extra* tag. They are:
+
+- ✦ **AI writing and AI Studio** (below).
+- ✦ **Real-time co-editing** with per-person undo and live cursors ([Co-editing](#co-editing)). Word has this; WordCraft does not yet.
+- ✦ **Fonts on demand** from the Google Fonts library ([Fonts](#fonts)).
+
+## AI (Extra)
+
+`ai` puts a sparkle at the bottom centre of the editor, like Gemini in Google Docs. Hovering shows "Help me write"; clicking opens the AI bar:
+
+- **Quick actions:** chips above the prompt box. With text selected: Rewrite, Shorten, Elaborate, More formal, and under More: Fix grammar, Summarize, More casual, Turn into an email, Make an outline, Match doc format. Without a selection: Match doc format, Continue writing, Meeting notes, Email draft, and under More: Summarize, Outline, Brainstorm.
+- **The prompt box:** + for templates (proposal, formal letter, blog post, cover letter and more), AI Studio, the "Write with …" field, a ⋮ menu and the send button.
+- **Answers:** they stream into a preview. People then insert it, replace the selection, insert it below, try again or discard it.
+
+### AI Studio
+
+The sliders button in the prompt box opens AI Studio. Its settings stay in the person's browser.
+
+- **Skills:** writing instructions added to every request. The **Humaniser** is on by default. It asks for natural, human-sounding prose with varied rhythm, plain words, no stock AI phrases and no em dashes. Built-in skills also include Plain English, Concise, Persuasive, Academic, Warm & friendly and British English. People can write their own skill or import a `SKILL.md` (front matter `name` and `description`, then the instructions). Your app can add skills with `ai.skills` and choose which are on with `ai.defaultSkills`.
+- **Letterhead:** organisation name, tagline, address, contact line, logo, font, alignment and an accent rule, with a live preview. *Apply to document* writes it into the document header. The AI also gets these details as context for letters and emails. Your app can supply a starting letterhead with `ai.letterhead`.
+- **Palette:** eight brand palettes and a custom one. *Apply to headings* recolours the title and Heading 1 to 3, and the letterhead uses the same colours. Your app can add palettes with `ai.palettes`.
+- **Model:** the provider, API key, model and endpoint (see below).
+
+### Where answers come from
+
+The first of these that is set up is used:
+
+1. **The person's own key.** They add an OpenRouter, OpenAI, Anthropic, Google Gemini or any OpenAI-compatible key under Model. It stays in their browser and is sent only to that provider. This is on by default; turn it off with `allowUserKey: false`. `ai={true}` offers only this, and the sparkle asks for a key the first time.
+2. **`provider`**, a key your app supplies: `{ provider: 'openrouter', apiKey, model? }`. The key is visible to the page, so use a per-user or short-lived key here.
+3. **`complete`**, your own function. It is usually a call to your API route, which keeps your key on your server and works with any model.
 
 ```tsx
+// Your endpoint (people can still bring their own key):
 <WordcraftEditor
   ai={{
     async *complete({ signal, ...request }) {
@@ -159,11 +189,19 @@ import { googleFonts } from '@gamine/wordcraft-react';
         yield new TextDecoder().decode(value);
       }
     },
+    letterhead: { name: 'Open Studio Collective', contact: 'hello@openstudio.org' },
+    skills: [{ id: 'house-style', name: 'House style', instructions: 'Use sentence case headings.' }],
+    defaultSkills: ['humaniser', 'house-style'],
   }}
 />
+
+// Only people's own OpenRouter / OpenAI / Anthropic / Gemini keys:
+<WordcraftEditor ai />
 ```
 
-`request` has `prompt`, `action`, `selection` and `document`. `describeAiRequest(request)` from `@gamine/wordcraft-react/core` turns a quick action into a task description for your model. [`examples/nextjs/app/api/ai/route.ts`](examples/nextjs/app/api/ai/route.ts) streams Claude using `ANTHROPIC_API_KEY`.
+`request` has `prompt`, `action`, `selection`, `document`, and `instructions` (the skills that are on, and the letterhead). On your server, pass the request to `aiSystemPrompt(request)` from `@gamine/wordcraft-react/core` to build the system prompt with those instructions, and to `describeAiRequest(request)` to turn a quick action into a task for your model. `completeWith(providerConfig, request)` streams from any supported provider, and works in an API route too. [`examples/nextjs/app/api/ai/route.ts`](examples/nextjs/app/api/ai/route.ts) streams Claude using `ANTHROPIC_API_KEY`.
+
+Other options: `launcher: 'none'` hides the sparkle (control the bar with the `aiOpen` and `onAiOpenChange` props), `ribbonButton: true` adds a sparkle beside Comments in the ribbon, `studio: false` hides skills, letterhead and palette, and `onStudioChange` reports AI Studio's settings so you can keep them on your server.
 
 ## Without React
 
@@ -185,7 +223,7 @@ The `/core` entry point has no React dependency, and importing it on the server 
 - **Rendering.** WordCraft draws onto a `<canvas>` with its own UI toolkit (egui), which is why it can match Word's interface pixel for pixel. The flip side is that host CSS can't style what's inside the editor. Use `prefs` (dark mode, language, ribbon) and commands instead.
 - **Keyboard.** As with any embedded app, shortcuts go to the editor once it has focus.
 - **Persistence.** The editor never writes to browser storage. Your app owns the document, and both AutoSave and Save go through `onSave`. You can also call `export()` whenever you like.
-- **Patches on upstream.** The package applies three small patches to WordCraft, listed in [`patches/`](patches). They cover AutoSave on the web, hiding the title bar and ribbon, the co-editing hooks, and host controls (tabs, modes, turned-off commands, fonts). They're written so they can be offered upstream.
+- **Patches on upstream.** The package applies four small patches to WordCraft, listed in [`patches/`](patches). They cover AutoSave on the web, hiding the title bar and ribbon, the co-editing hooks, host controls (tabs, modes, turned-off commands, fonts), and the AI button with Word's ribbon collapse. They're written so they can be offered upstream.
 - **How close to Word.** See [docs/WORD-PARITY.md](docs/WORD-PARITY.md).
 
 ## Repository layout

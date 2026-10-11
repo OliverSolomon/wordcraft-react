@@ -68,13 +68,21 @@ The editor is WordCraft, so its Word coverage is WordCraft's. Upstream measures 
 | Picture Format | 14 of 14 |
 | Shape Format | 3 of 6 |
 
-## What this package adds on top
+## Extras: what this package adds beyond Word and WordCraft
 
-- **Co-editing:** real-time co-authoring with per-person undo, cursors and avatars. Upstream lists this as a gap.
-- **Modes:** the Editing / Reviewing / Viewing switch with a real read-only Viewing mode.
-- **AutoSave:** works on the web, through the host app.
-- **AI:** an AI writing bar. Upstream's gap #25 is a Copilot-style assistant.
-- **Host controls:** which ribbon tabs show, commands the host turns off, Word's Ribbon Display Options, and the user's name.
+These are tagged **✦ Extra** in the docs and *Extra* in the editor, because they are not part of Microsoft Word, WordCraft, or either.
+
+| Extra | Word | WordCraft |
+|---|---|---|
+| AI bar: a sparkle at the bottom centre, Gemini-style quick actions, templates, streaming answers | Copilot is separate | Gap #25 |
+| AI Studio skills: Humaniser on by default, built-in and custom skills, SKILL.md import | No | No |
+| AI Studio letterhead: organisation details and logo written into the header, used as AI context | No | No |
+| AI Studio palettes: brand colours for the title, headings and letterhead | Theme colours only | Theme colours only |
+| Bring your own AI key: OpenRouter, OpenAI, Anthropic, Gemini or OpenAI-compatible | No | No |
+| Real-time co-editing with per-person undo and cursors | Yes | Not yet |
+| Google Fonts library on demand | Cloud fonts | No |
+
+Host-app controls are also this package's own: which ribbon tabs show, commands the host turns off, the Editing/Reviewing/Viewing mode, Ribbon Display Options, and the user's name.
 
 ## How gaps close
 

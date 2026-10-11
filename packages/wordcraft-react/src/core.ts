@@ -208,6 +208,10 @@ export interface WordcraftOptions {
    * Default: `googleFonts()`, the Google Fonts library. `false` offers only the built-in fonts.
    */
   fonts?: FontSource | FontSource[] | false;
+  /** Show the AI (sparkle) button in the ribbon, beside Comments. Default: off. */
+  aiButton?: boolean;
+  /** Called when someone clicks the AI button. */
+  onAiButton?: () => void;
   /** Called after edits (coalesced to at most once per frame). */
   onChange?: (info: ChangeInfo) => void;
   /**
@@ -256,6 +260,10 @@ export interface WordcraftEditor {
   addFont(bytes: Uint8Array): void;
   /** Whether a font family is available to documents now. */
   hasFont(family: string): boolean;
+  /** Show or hide the AI (sparkle) button in the ribbon. */
+  setAiButton(on: boolean): void;
+  /** Replace the AI button listener (or remove it with `null`). */
+  setOnAiButton(cb: (() => void) | null): void;
   /** Whether AutoSave is on. */
   isAutoSaving(): boolean;
   /** Turn AutoSave on or off (needs `onSave`); returns whether it is now on. */
@@ -321,6 +329,8 @@ interface RawHandle {
   addFont(bytes: Uint8Array): number;
   hasFont(family: string): boolean;
   documentFonts(): string;
+  setAiButton?(on: boolean): void;
+  setOnHostEvent?(cb: ((event: string) => void) | null): void;
   collabStart(clientId: number, state: Uint8Array | null): boolean;
   collabApply(update: Uint8Array): void;
   collabState(): Uint8Array;
@@ -404,6 +414,10 @@ import type { FontSource } from './fonts.js';
 export { googleFonts } from './fonts.js';
 export { describeAiRequest } from './ai-core.js';
 export type { AiAction, AiRequest } from './ai-core.js';
+export { AI_PROVIDERS, AI_SYSTEM_PROMPT, aiSystemPrompt, aiUserMessage, completeWith } from './ai-providers.js';
+export { BUILT_IN_PALETTES, BUILT_IN_SKILLS, HUMANISER, applyLetterhead, applyPalette, parseSkillMarkdown, studioInstructions } from './ai-studio.js';
+export type { AiSkill, AiStudioState, Letterhead, Palette } from './ai-studio.js';
+export type { AiProviderConfig, AiProviderId } from './ai-providers.js';
 export type { FontSource, GoogleFontsOptions } from './fonts.js';
 
 /**
@@ -539,6 +553,13 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     userOnChange?.(info);
   };
 
+  // Events from WordCraft's UI meant for the page.
+  let onAi: (() => void) | null = options.onAiButton ?? null;
+  raw.setOnHostEvent?.((event) => {
+    if (event === 'ai') onAi?.();
+  });
+  if (options.aiButton) raw.setAiButton?.(true);
+
   raw.setOnChange(options.onChange ?? null);
   raw.setOnSave(wrapSave(options.onSave));
   let user: WordcraftUser = options.user ? { ...options.user } : { name: (JSON.parse(raw.getUser()) as { name: string }).name };
@@ -638,6 +659,13 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     setTabs(show, hide) {
       alive();
       raw.setPrefs(JSON.stringify({ hiddenTabs: hiddenTabsFor(show, hide) }));
+    },
+    setAiButton(on) {
+      alive();
+      raw.setAiButton?.(on);
+    },
+    setOnAiButton(cb) {
+      onAi = cb;
     },
     setDisabledCommands(commands) {
       alive();

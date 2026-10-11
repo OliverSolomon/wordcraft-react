@@ -1,7 +1,7 @@
 // The AI bar's endpoint: streams Claude's answer as plain text. Set ANTHROPIC_API_KEY (and
 // optionally ANTHROPIC_MODEL). With WORDCRAFT_FAKE_AI=1 it streams a canned answer, for tests.
 // Any model works: the editor only needs text back.
-import { describeAiRequest, type AiAction } from '@gamine/wordcraft-react/core';
+import { aiSystemPrompt, describeAiRequest, type AiAction } from '@gamine/wordcraft-react/core';
 
 export const runtime = 'nodejs';
 
@@ -12,9 +12,10 @@ interface Body {
   action: AiAction;
   selection: string;
   document: string;
+  /** AI Studio's skills (the Humaniser by default) and letterhead context. */
+  instructions?: string;
 }
 
-const SYSTEM = `You help people write in a word processor. Reply with only the text to put in the document: no preamble, no quotes around it, no Markdown headings or bold markers. Use blank lines between paragraphs. Match the document's language and tone unless asked otherwise.`;
 
 export async function POST(req: Request) {
   const body = (await req.json()) as Body;
@@ -29,7 +30,8 @@ export async function POST(req: Request) {
     .join('\n\n');
 
   if (process.env.WORDCRAFT_FAKE_AI === '1') {
-    const words = `Here is a draft paragraph for "${task.slice(0, 40)}". It was written by the test model.`.split(' ');
+    const skills = body.instructions?.includes('Humaniser') ? ' with the Humaniser' : '';
+    const words = `Here is a draft paragraph for "${task.slice(0, 40)}". It was written by the test model${skills}.`.split(' ');
     const stream = new ReadableStream({
       async start(ctl) {
         for (const w of words) {
@@ -52,7 +54,7 @@ export async function POST(req: Request) {
       model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-5-5',
       max_tokens: 1500,
       stream: true,
-      system: SYSTEM,
+      system: aiSystemPrompt(body),
       messages: [{ role: 'user', content: user }],
     }),
     signal: req.signal,
