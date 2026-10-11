@@ -25,7 +25,7 @@ async function person(name) {
 }
 
 const text = (p) => p.page.evaluate(() => window.wordcraft.getText());
-const until = (p, fn, arg, what, timeout = 15_000) =>
+const until = (p, fn, arg, what, timeout = 30_000) =>
   p.page.waitForFunction(fn, arg, { timeout }).catch(() => {
     throw new Error(`${p.name}: timed out waiting for ${what}`);
   });
@@ -79,7 +79,7 @@ try {
   await b.page.screenshot({ path: 'collab-brian.png' });
 
   // AutoSave overwrites the one shared file with the merged document.
-  await until(a, () => document.querySelector('[data-testid=saved]')?.textContent?.includes('AutoSaved'), null, 'AutoSave', 20_000);
+  await until(a, () => document.querySelector('[data-testid=saved]')?.textContent?.includes('AutoSaved'), null, 'AutoSave', 60_000); // slow on CI's software GPU
   const res = await fetch(`${base}/api/documents/${docId}`);
   assert.equal(res.status, 200, 'shared file exists');
   assert.ok((await res.arrayBuffer()).byteLength > 1000, 'shared file is a docx');

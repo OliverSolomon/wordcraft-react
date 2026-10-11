@@ -63,7 +63,8 @@ function splitReadme(md) {
     if (line.startsWith('```')) inCode = !inCode;
     if (!inCode && line.startsWith('## ')) {
       sections.set(name, buf.join('\n').trim());
-      name = line.slice(3).trim();
+      // Trailing punctuation in a heading ("Co-editing.") doesn't change which section it is.
+      name = line.slice(3).trim().replace(/[.:!]+$/, '').trim();
       buf = [];
     } else if (!inCode && line.startsWith('# ') && !name) {
       // the package title: the site has its own
