@@ -44,6 +44,8 @@ struct Shared {
     on_collab_cursor: RefCell<Option<js_sys::Function>>,
     /// `cb(family)` when someone picks a web font that isn't loaded yet.
     on_font_request: RefCell<Option<js_sys::Function>>,
+    /// `cb(event)` for host events from the UI (`"ai"`: the AI button was clicked).
+    on_host_event: RefCell<Option<js_sys::Function>>,
 }
 
 impl Shared {
@@ -90,6 +92,7 @@ pub async fn mount(
         on_collab_update: RefCell::new(None),
         on_collab_cursor: RefCell::new(None),
         on_font_request: RefCell::new(None),
+        on_host_event: RefCell::new(None),
     });
 
     let mut web_options = eframe::WebOptions::default();
@@ -218,7 +221,25 @@ impl Shell {
 }
 
 impl Shell {
-    /// Web fonts picked in the font box that aren't loaded yet: ask the page to fetch them.
+    /// Events from WordCraft's UI meant for the page, such as the AI button being clicked.
+    fn host_events(&self, app: &mut WordApp) {
+        if app.host_events.is_empty() {
+            return;
+        }
+        let events = std::mem::take(&mut app.host_events);
+        let shared = self.shared.clone();
+        defer(move || {
+            let cb = shared.on_host_event.borrow().clone();
+            if let Some(cb) = cb {
+                for e in events {
+                    if let Err(err) = cb.call1(&JsValue::NULL, &e.as_str().into()) {
+                        log::error!("wordcraft host event handler threw: {err:?}");
+                    }
+                }
+            }
+        });
+    }
+
     fn font_requests(&self, app: &mut WordApp) {
         if app.font_requests.is_empty() {
             return;
@@ -314,6 +335,7 @@ impl eframe::App for Shell {
         point_autosave(&self.shared, app);
         self.collab_frame(app, ui);
         self.font_requests(app);
+        self.host_events(app);
         self.note_changes(app);
     }
 }
@@ -847,6 +869,21 @@ impl WordcraftHandle {
         self.with_app(|app| serde_json::to_string(&document_fonts(&app.session.doc)).map_err(|e| e.to_string()))
     }
 
+    /// Show or hide the AI (sparkle) button beside Comments.
+    #[wasm_bindgen(js_name = setAiButton)]
+    pub fn set_ai_button(&self, on: bool) -> Result<(), JsValue> {
+        self.with_app(|app| {
+            app.ai_button = on;
+            Ok(())
+        })
+    }
+
+    /// `cb(event)` for events from WordCraft's UI meant for the page (`"ai"`).
+    #[wasm_bindgen(js_name = setOnHostEvent)]
+    pub fn set_on_host_event(&self, cb: Option<js_sys::Function>) {
+        *self.shared.on_host_event.borrow_mut() = cb;
+    }
+
     /// Whether a font family is available to documents now.
     #[wasm_bindgen(js_name = hasFont)]
     pub fn has_font(&self, family: &str) -> bool {
@@ -867,6 +904,7 @@ impl WordcraftHandle {
         *self.shared.on_collab_update.borrow_mut() = None;
         *self.shared.on_collab_cursor.borrow_mut() = None;
         *self.shared.on_font_request.borrow_mut() = None;
+        *self.shared.on_host_event.borrow_mut() = None;
         if let Ok(mut c) = self.shared.collab.try_borrow_mut() {
             *c = None;
         }

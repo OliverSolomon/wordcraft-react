@@ -10,6 +10,7 @@ upstream as-is. When upstream accepts one, delete it here.
 | 0001 | AutoSave on the web when the host keeps documents (upstream greys it out in the browser), and hiding the title bar and the ribbon |
 | 0002 | Real-time co-editing: Undo and Redo can be handed to the host (so they take back only your own changes), and the title bar shows who else is editing |
 | 0003 | Host controls: which ribbon tabs show, Word's Viewing mode, commands the host turns off, Theme / Recently Used / All Fonts sections and on-demand web fonts in the font box, and clicking a comment to go to its text |
+| 0004 | An AI (sparkle) button beside Comments for hosts that offer AI, and Word's ribbon collapse: the ^ button, and a collapsed ribbon that opens over the page when a tab is clicked, with a pin |
 
 The patches were made against the upstream commit in `BASE`. Every sync rebases them onto the new
 upstream with a three-way merge and refreshes them, so they only need a person when both sides
