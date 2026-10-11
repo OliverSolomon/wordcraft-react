@@ -76,17 +76,25 @@ jobs:
           npm publish --access public --provenance
       - name: GitHub release
         # Also runs when npm already has the version, so a release that failed here can be redone.
-        # GitHub refuses the workflow token a tag on a commit that changes workflow files, so the tag
-        # then goes on the nearest earlier commit that doesn't (same package source).
+        # The workflow token may only tag commits whose workflow files match main's, so the tag
+        # goes on the released commit, or else on main when main still has this version. A tag
+        # whose commit holds another version (a bad earlier attempt) is replaced.
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$REF" >/dev/null 2>&1 && { echo "$REF already has a GitHub release"; exit 0; }
-          { python3 scripts/changelog.py notes "${REF#v}"; echo; echo "Upstream WordCraft: storytold/wordcraft@$(cat UPSTREAM_REV)"; } > notes.md
-          git fetch -q --deepen=50 origin || true
-          for c in $(git rev-list -n 50 "$TARGET"); do
-            if [ -n "$(git diff-tree --no-commit-id --name-only -r "$c" -- .github/workflows)" ]; then continue; fi
+          version_at() { git show "$1:packages/wordcraft-react/package.json" 2>/dev/null | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).version)}catch{}})"; }
+          git fetch -q origin main --tags --depth=100 || true
+          if gh release view "$REF" >/dev/null 2>&1; then
+            tagged=$(git rev-list -n 1 "$REF" 2>/dev/null || true)
+            if [ -n "$tagged" ] && [ "$(version_at "$tagged")" = "$VERSION" ]; then echo "$REF is released"; exit 0; fi
+            echo "::warning::$REF points at a commit with another version; replacing it"
+            gh release delete "$REF" --yes --cleanup-tag
+          fi
+          { python3 scripts/changelog.py notes "$VERSION"; echo; echo "Upstream WordCraft: storytold/wordcraft@$(cat UPSTREAM_REV)"; } > notes.md
+          main=$(git rev-parse origin/main)
+          for c in "$TARGET" "$main"; do
+            [ "$(version_at "$c")" = "$VERSION" ] || continue
             if gh release create "$REF" --target "$c" --title "$REF" --notes-file notes.md; then echo "tagged $REF at $c"; exit 0; fi
           done
           echo "::warning::Couldn't create the $REF GitHub release; create it by hand from CHANGELOG.md"
