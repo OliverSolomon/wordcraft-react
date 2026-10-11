@@ -76,6 +76,9 @@ jobs:
           npm publish --access public --provenance
       - name: GitHub release
         if: steps.npm.outputs.already != 'true'
+        # The package is already on npm by now. GitHub refuses the workflow token a tag on a commit
+        # that changes workflow files; then create the release by hand from the changelog.
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
