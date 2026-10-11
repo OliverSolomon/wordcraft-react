@@ -18,7 +18,7 @@ That gives us two ways to build a package:
 1. **Rebuild the UI in React** and use only the engine through WebAssembly. That would mean months of work re-creating the ribbon, the dialogs, the page rendering and the typing behaviour. The result would drift from upstream with every release, so it could never be a 1:1 match.
 2. **Wrap the official web build** (chosen). Embed the exact upstream app on a canvas the host owns, and add a thin API layer around it. Look and behaviour are identical by construction, and keeping up with upstream means bumping a commit hash.
 
-The trade-off with option 2 is that the editor is a canvas application. Host CSS can't style its insides, and the binary is large (about 25 MB, or 10 MB gzipped). Both are acceptable for an "embed Word or Excel in my app" product, and the README documents them.
+The trade-off with option 2 is that the editor is a canvas application. Host CSS can't style its insides, and the binary is large (about 30 MB, or 12 MB gzipped). Both are acceptable for an "embed Word or Excel in my app" product, and the README documents them.
 
 ## Architecture (same for both packages)
 
@@ -55,6 +55,7 @@ Upstream is pinned to one commit (`UPSTREAM_REV`) and never forked. A few small 
 6. Browser verification in headless Chromium (WebGL2): the full ribbon renders, and load, export (docx, pdf, html, md), the docx round trip, execute, prefs, Ctrl+S reaching onSave, and keyboard typing all work (done).
 7. Publish to npm (done: 0.1.1, then automatic releases).
 8. Working AutoSave when embedded, a configurable and readable user, and hideable title bar and ribbon (done, 0.2.0).
+10. Upstream every two hours with self-refreshing patches; host-chosen ribbon tabs, Word's Editing/Reviewing/Viewing modes, turned-off commands, Google Fonts on demand with Recently Used Fonts, comment click-to-text, and an AI writing bar like Google Docs (done, 0.2.0). See docs/WORD-PARITY.md for how close the editor is to Word.
 9. Real-time co-editing the way Word does it, on Yjs (done, 0.2.0): character-level merging, property-level formatting merges, per-person undo, cursors and avatars, AutoSave of the one shared file with version history in the example, and a two-browser test in CI.
 
 ### Phase 2: GridCraft

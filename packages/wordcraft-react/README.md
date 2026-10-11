@@ -35,7 +35,7 @@ React 18 or 19 is a peer dependency, and only the React entry point needs it. Th
 
 The component is marked `'use client'` and starts the editor inside an effect. On the server it renders only its sized container, so it works in the App Router and the Pages Router with no `dynamic(() => import(...), { ssr: false })` wrapper. The `.wasm` file is loaded through `new URL(..., import.meta.url)`, and webpack 5, Turbopack, Vite, Rollup and esbuild all emit it as a static asset automatically.
 
-If you would rather serve the binary yourself (from a CDN, say, or from `public/`), copy `node_modules/@gamine/wordcraft-react/wasm/wordcraft_embed_bg.wasm` and pass `wasmUrl="/wordcraft_embed_bg.wasm"`. Serve it as `application/wasm` with gzip or Brotli. Compression takes it from about 25 MB to about 10 MB with gzip, and less with Brotli. When a bundler emits the file, its name carries a content hash, so it can be cached indefinitely. If you copy it yourself, the name doesn't change between releases, so give it a cache lifetime that matches your deploys.
+If you would rather serve the binary yourself (from a CDN, say, or from `public/`), copy `node_modules/@gamine/wordcraft-react/wasm/wordcraft_embed_bg.wasm` and pass `wasmUrl="/wordcraft_embed_bg.wasm"`. Serve it as `application/wasm` with gzip or Brotli. Compression takes it from about 30 MB to about 12 MB with gzip, and less with Brotli. When a bundler emits the file, its name carries a content hash, so it can be cached indefinitely. If you copy it yourself, the name doesn't change between releases, so give it a cache lifetime that matches your deploys.
 
 A complete example app lives in [`examples/nextjs`](examples/nextjs).
 
@@ -49,6 +49,11 @@ A complete example app lives in [`examples/nextjs`](examples/nextjs).
 | `autoSave` | `boolean` | AutoSave starts on (default) or off. It writes through `onSave` with `reason: 'autosave'` a couple of seconds after edits, and the title bar toggle switches it, as in Word. Needs `onSave`. |
 | `titleBar` | `boolean` | `false` hides the title bar (AutoSave, Quick Access Toolbar, title, search, avatar). |
 | `ribbon` | `'full' \| 'tabs' \| 'hidden'` | Word's Ribbon Display Options: always show, show tabs only, or hide the ribbon completely. |
+| `tabs`, `hiddenTabs` | `RibbonTab[]` | Which ribbon tabs to offer: `File`, `Home`, `Insert`, `Draw`, `Design`, `Layout`, `References`, `Mailings`, `Review`, `View`, `Zotero`, `Help`. Contextual tabs (Table Design, Picture Format…) still appear when needed. Applied live. |
+| `mode` | `'editing' \| 'reviewing' \| 'viewing'` | Word's mode switch. Reviewing turns on Track Changes; Viewing allows reading, copying, printing and exporting but no changes. People can also switch it from the button beside Comments. |
+| `disabledCommands` | `string[]` | Commands to turn off, by id from `editor.commands()` or by prefix (`'mailings.*'`, `'file.open'`). They're greyed in the ribbon and refused from shortcuts, menus and `execute`. |
+| `fonts` | `FontSource \| FontSource[] \| false` | Fonts offered in the font box on demand. The default is `googleFonts()`, the whole Google Fonts library, fetched when first picked or when a document uses one. `false` keeps to the built-in fonts. |
+| `ai` | `{ complete, label?, placement? }` | An AI writing bar at the bottom, like Google Docs' "Help me write". See [AI](#ai). |
 | `collaboration` | | Real-time co-editing, e.g. `yjsCollaboration({ doc, provider })`. See [Co-editing](#co-editing). |
 | `dark`, `prefs` | | UI preferences, applied live: ribbon `tab`, `dark`, `darkPage`, `language`, `showDiscord`. |
 | `renderer` | `'auto' \| 'webgl'` | Uses WebGPU and falls back to WebGL2. Pass `webgl` to force WebGL2. |
@@ -78,6 +83,10 @@ editor.isDirty(); editor.markSaved(); editor.rev(); editor.title();
 editor.getPrefs(); editor.setPrefs({ tab: 'Review', dark: true, hideTitleBar: true });
 editor.getUser(); editor.setUser({ name: 'Ada Lovelace', color: '#c2410c' });
 editor.isAutoSaving(); editor.setAutoSave(false);
+editor.getMode(); editor.setMode('viewing');
+editor.setTabs(['File', 'Home', 'Insert', 'Review']);
+editor.setDisabledCommands(['mailings.*', 'file.open']);
+editor.addFont(ttfBytes); editor.hasFont('Lato');
 editor.destroy();
 ```
 
@@ -123,6 +132,39 @@ export function SharedEditor({ docId, me }: { docId: string; me: { name: string;
 
 The first person to open a document shares whatever the editor has open (pass the stored file as `document`). Everyone who joins later gets the live shared document instead. `yjsCollaboration` waits for the provider's first sync before joining, so a document is never put in twice. [`examples/nextjs/app/collab`](examples/nextjs/app/collab) is a complete page with a shared-file API that keeps the last 20 versions. Run `npm run collab-server` next to `npm run dev` and open `/collab` in two windows to try it.
 
+## Fonts
+
+The browser build bundles a handful of fonts, so the font box also offers fonts on demand, the way Word offers cloud fonts. By default that's the Google Fonts library (about 1,970 openly licensed families). A font downloads from the Fontsource CDN the first time someone picks it, or when an opened document uses it. The font box lists Theme Fonts, Recently Used Fonts and All Fonts, as Word does, and remembers recently used fonts in the browser.
+
+```tsx
+import { googleFonts } from '@gamine/wordcraft-react';
+<WordcraftEditor fonts={googleFonts({ categories: ['serif', 'sans-serif'] })} />   // a narrower list
+<WordcraftEditor fonts={{ families: () => ['Brand Sans'], load: async () => [await (await fetch('/fonts/brand.ttf')).arrayBuffer()].map((b) => new Uint8Array(b)) }} />
+<WordcraftEditor fonts={false} />                                                    // built-in fonts only
+```
+
+## AI
+
+`ai` adds a "Help me write" bar at the bottom of the editor, like Google Docs. People describe what to write, or pick a quick action for the selected text (rewrite, shorten, elaborate, more formal or casual, fix spelling and grammar, summarize). They see the answer stream in, then insert it, replace the selection, try again or discard it. The package never calls an AI service itself. `complete` is your function, so any model or provider works, and your API key stays on your server.
+
+```tsx
+<WordcraftEditor
+  ai={{
+    async *complete({ signal, ...request }) {
+      const res = await fetch('/api/ai', { method: 'POST', body: JSON.stringify(request), signal });
+      const reader = res.body!.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        yield new TextDecoder().decode(value);
+      }
+    },
+  }}
+/>
+```
+
+`request` has `prompt`, `action`, `selection` and `document`. `describeAiRequest(request)` from `@gamine/wordcraft-react/core` turns a quick action into a task description for your model. [`examples/nextjs/app/api/ai/route.ts`](examples/nextjs/app/api/ai/route.ts) streams Claude using `ANTHROPIC_API_KEY`.
+
 ## Without React
 
 ```ts
@@ -139,11 +181,12 @@ The `/core` entry point has no React dependency, and importing it on the server 
 
 ## Things to know
 
-- **Size.** The binary is about 25 MB, or about 10 MB gzipped, and it's the full application, including its fonts. Load it on the pages that need it, and call `preloadWordcraft()` on hover or route prefetch.
+- **Size.** The binary is about 30 MB, or about 12 MB gzipped, and it's the full application, including its fonts. Load it on the pages that need it, and call `preloadWordcraft()` on hover or route prefetch.
 - **Rendering.** WordCraft draws onto a `<canvas>` with its own UI toolkit (egui), which is why it can match Word's interface pixel for pixel. The flip side is that host CSS can't style what's inside the editor. Use `prefs` (dark mode, language, ribbon) and commands instead.
 - **Keyboard.** As with any embedded app, shortcuts go to the editor once it has focus.
 - **Persistence.** The editor never writes to browser storage. Your app owns the document, and both AutoSave and Save go through `onSave`. You can also call `export()` whenever you like.
-- **Patches on upstream.** The package applies three small patches to WordCraft, listed in [`patches/`](patches): AutoSave on the web, hideable title bar and ribbon, the co-editing hooks, and the browser clock. They're written so they can be offered upstream.
+- **Patches on upstream.** The package applies three small patches to WordCraft, listed in [`patches/`](patches). They cover AutoSave on the web, hiding the title bar and ribbon, the co-editing hooks, and host controls (tabs, modes, turned-off commands, fonts). They're written so they can be offered upstream.
+- **How close to Word.** See [docs/WORD-PARITY.md](docs/WORD-PARITY.md).
 
 ## Repository layout
 
@@ -172,9 +215,9 @@ cd ../../examples/nextjs && npm install && npm run dev
 
 ## Staying in step with upstream
 
-The **Upstream sync** workflow runs every morning (06:17 Nairobi time), and you can also start it by hand from the Actions tab. When storytold/wordcraft has new commits, it:
+The **Upstream sync** workflow runs every two hours, and you can also start it by hand from the Actions tab. When storytold/wordcraft has new commits, it:
 
-1. pins the new commit, re-applies `patches/` on top of it and copies upstream's `Cargo.lock`, so every shared dependency matches upstream exactly;
+1. pins the new commit, rebases `patches/` onto it with a three-way merge (refreshing them) and copies upstream's `Cargo.lock`, so every shared dependency matches upstream exactly;
 2. rebuilds the WebAssembly and runs every check: Rust lints and tests, the package tests, the Next.js example build, and a headless-browser smoke test that starts the editor and exercises the API;
 3. if everything passes, bumps the patch version, commits, tags `vX.Y.Z` and publishes to npm through the Release workflow.
 

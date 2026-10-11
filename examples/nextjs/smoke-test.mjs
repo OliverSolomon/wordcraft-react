@@ -85,6 +85,57 @@ try {
   await page.fill('input[aria-label="Your name"]', 'Grace Hopper');
   await page.waitForFunction(() => window.wordcraft.getUser().name === 'Grace Hopper', null, { timeout: 5_000 });
 
+  // Word's mode switch: Viewing refuses changes, Reviewing turns on Track Changes.
+  await page.selectOption('select[aria-label="Mode"]', 'viewing');
+  await page.waitForFunction(() => window.wordcraft.getMode() === 'viewing', null, { timeout: 5_000 });
+  const refused = await page.evaluate(() => {
+    try {
+      window.wordcraft.execute('text.insert', { text: 'nope' });
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  assert.ok(refused, 'Viewing mode refuses edits');
+  await page.selectOption('select[aria-label="Mode"]', 'reviewing');
+  await page.waitForFunction(() => window.wordcraft.getMode() === 'reviewing', null, { timeout: 5_000 });
+  await page.selectOption('select[aria-label="Mode"]', 'editing');
+  await page.waitForFunction(() => window.wordcraft.getMode() === 'editing', null, { timeout: 5_000 });
+
+  // The app chooses ribbon tabs and turns commands off.
+  await page.click('text=Hide Mailings, Zotero, Open');
+  await page.waitForFunction(() => JSON.stringify(window.wordcraft.getPrefs().hiddenTabs) === '["Mailings","Zotero"]', null, { timeout: 5_000 });
+  const openRefused = await page.evaluate(() => {
+    try {
+      window.wordcraft.execute('file.open', {});
+      return false;
+    } catch (e) {
+      return /turned off/.test(String(e.message));
+    }
+  });
+  assert.ok(openRefused, 'turned-off commands are refused');
+  await page.click('text=Hide Mailings, Zotero, Open');
+
+  // The AI bar (the example's /api/ai streams a canned answer when WORDCRAFT_FAKE_AI=1).
+  if (process.env.WORDCRAFT_FAKE_AI === '1') {
+    await page.evaluate(() => window.wordcraft.execute('caret.docEnd'));
+    await page.click('text=Help me write');
+    await page.fill('[role=dialog] textarea', 'one sentence');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('[role=dialog]')?.textContent?.includes('test model'), null, { timeout: 15_000 });
+    await page.click('[role=dialog] button:has-text("Insert")');
+    await page.waitForFunction(() => window.wordcraft.getText().includes('written by the test model'), null, { timeout: 5_000 });
+  }
+
+  // A web font loads on demand and is used.
+  if (process.env.SMOKE_FONTS !== '0') {
+    await page.evaluate(() => {
+      window.wordcraft.execute('select.all');
+      window.wordcraft.execute('format.font', { name: 'Lato' });
+    });
+    await page.waitForFunction(() => window.wordcraft.hasFont('Lato'), null, { timeout: 30_000 });
+  }
+
   // Title bar and ribbon can be hidden, like Word's Ribbon Display Options.
   await page.click('text=Title bar');
   await page.selectOption('select[aria-label="Ribbon display"]', 'hidden');

@@ -38,7 +38,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     outputs:
       changed: ${{ steps.sync.outputs.changed }}
       tag: ${{ steps.commit.outputs.tag }}

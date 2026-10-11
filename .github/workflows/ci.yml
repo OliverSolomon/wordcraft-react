@@ -13,7 +13,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup

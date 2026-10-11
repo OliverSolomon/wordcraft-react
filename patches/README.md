@@ -11,6 +11,8 @@ upstream as-is. When upstream accepts one, delete it here.
 | 0002 | Real-time co-editing: Undo and Redo can be handed to the host (so they take back only your own changes), and the title bar shows who else is editing |
 | 0003 | Host controls: which ribbon tabs show, Word's Viewing mode, commands the host turns off, Theme / Recently Used / All Fonts sections and on-demand web fonts in the font box, and clicking a comment to go to its text |
 
-If the daily upstream sync reports that a patch no longer applies, rebase it: check out the new
-upstream commit, apply the patch by hand, fix the conflict, and regenerate it with
-`git format-patch -1 -o patches/`.
+The patches were made against the upstream commit in `BASE`. Every sync rebases them onto the new
+upstream with a three-way merge and refreshes them, so they only need a person when both sides
+changed the same lines. Then the sync opens an issue: check out the new upstream commit, apply the
+patches with `git am --3way`, resolve the conflict, and regenerate them with
+`git format-patch <new commit> -o patches/` (and update `BASE`).
