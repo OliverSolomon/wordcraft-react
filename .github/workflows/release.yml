@@ -75,12 +75,18 @@ jobs:
           npm i -g npm@11   # trusted publishing needs npm >= 11.5
           npm publish --access public --provenance
       - name: GitHub release
-        if: steps.npm.outputs.already != 'true'
-        # The package is already on npm by now. GitHub refuses the workflow token a tag on a commit
-        # that changes workflow files; then create the release by hand from the changelog.
+        # Also runs when npm already has the version, so a release that failed here can be redone.
+        # GitHub refuses the workflow token a tag on a commit that changes workflow files, so the tag
+        # then goes on the nearest earlier commit that doesn't (same package source).
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          gh release view "$REF" >/dev/null 2>&1 && { echo "$REF already has a GitHub release"; exit 0; }
           { python3 scripts/changelog.py notes "${REF#v}"; echo; echo "Upstream WordCraft: storytold/wordcraft@$(cat UPSTREAM_REV)"; } > notes.md
-          gh release view "$REF" >/dev/null 2>&1 || gh release create "$REF" --target "$TARGET" --title "$REF" --notes-file notes.md
+          git fetch -q --deepen=50 origin || true
+          for c in $(git rev-list -n 50 "$TARGET"); do
+            if [ -n "$(git diff-tree --no-commit-id --name-only -r "$c" -- .github/workflows)" ]; then continue; fi
+            if gh release create "$REF" --target "$c" --title "$REF" --notes-file notes.md; then echo "tagged $REF at $c"; exit 0; fi
+          done
+          echo "::warning::Couldn't create the $REF GitHub release; create it by hand from CHANGELOG.md"
