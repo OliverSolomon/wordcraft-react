@@ -9,8 +9,12 @@
 export interface FontSource {
   /** Family names to list in the font box. */
   families(): string[] | Promise<string[]>;
-  /** Font files (TTF/OTF bytes) for `family`: regular, and bold/italic when there are any. */
-  load(family: string): Promise<Uint8Array[]>;
+  /**
+   * Font files (TTF/OTF bytes) for `family`: regular, and bold/italic when there are any. With
+   * `faces: 'regular'` only the regular face is needed (to preview the name in the font box);
+   * with `faces: 'others'` everything but the regular face (it is already loaded).
+   */
+  load(family: string, options?: { faces?: 'all' | 'regular' | 'others' }): Promise<Uint8Array[]>;
 }
 
 export interface GoogleFontsOptions {
@@ -54,15 +58,20 @@ export function googleFonts(options: GoogleFontsOptions = {}): FontSource {
       if (options.only) names = names.filter((n) => options.only!.includes(n));
       return names;
     },
-    async load(family) {
+    async load(family, options) {
+      const faces = options?.faces ?? 'all';
       const f = (await catalog()).get(family);
       if (!f) throw new Error(`${family} isn't a Google Font`);
       const url = (weight: number, style: string) =>
         template.replace('{id}', f.id).replace('{subset}', f.subset).replace('{weight}', String(weight)).replace('{style}', style);
-      const wanted: Array<[number, string]> = [[400, 'normal']];
-      if (f.bold) wanted.push([700, 'normal']);
-      if (f.italic) wanted.push([400, 'italic']);
-      if (f.bold && f.italic) wanted.push([700, 'italic']);
+      let wanted: Array<[number, string]> = [[400, 'normal']];
+      if (faces !== 'regular') {
+        if (f.bold) wanted.push([700, 'normal']);
+        if (f.italic) wanted.push([400, 'italic']);
+        if (f.bold && f.italic) wanted.push([700, 'italic']);
+      }
+      if (faces === 'others') wanted = wanted.slice(1);
+      if (!wanted.length) return [];
       const files: Array<Uint8Array | null> = await Promise.all(
         wanted.map(async ([w, s]): Promise<Uint8Array | null> => {
           const res = await fetch(url(w, s));
@@ -71,7 +80,7 @@ export function googleFonts(options: GoogleFontsOptions = {}): FontSource {
       );
       const ok: Uint8Array[] = [];
       for (const b of files) if (b && b.byteLength > 0) ok.push(b);
-      if (!ok.length) throw new Error(`couldn't download ${family}`);
+      if (!ok.length) throw new Error(`couldn’t download ${family}`);
       return ok;
     },
   };

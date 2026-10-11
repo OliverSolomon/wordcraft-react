@@ -16,7 +16,7 @@ runs:
       shell: bash
       working-directory: packages/wordcraft-react
       run: |
-        cp ../../README.md README.md
+        cp ../../README.md ../../CHANGELOG.md .
         npm install --no-audit --no-fund
         npm run typecheck
         npm run build

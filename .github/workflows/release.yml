@@ -79,5 +79,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$REF" >/dev/null 2>&1 || gh release create "$REF" --target "$TARGET" --generate-notes \
-            --notes "Upstream WordCraft: storytold/wordcraft@$(cat UPSTREAM_REV)"
+          { python3 scripts/changelog.py notes "${REF#v}"; echo; echo "Upstream WordCraft: storytold/wordcraft@$(cat UPSTREAM_REV)"; } > notes.md
+          gh release view "$REF" >/dev/null 2>&1 || gh release create "$REF" --target "$TARGET" --title "$REF" --notes-file notes.md

@@ -1,0 +1,25 @@
+{
+  "name": "wordcraft-react-site",
+  "private": true,
+  "description": "Documentation and live demos for @gamine/wordcraft-react, published to GitHub Pages.",
+  "scripts": {
+    "docs": "node scripts/sync-docs.mjs",
+    "dev": "npm run docs && next dev",
+    "build": "npm run docs && next build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@gamine/wordcraft-react": "^0.3.1",
+    "marked": "^14.1.4",
+    "next": "^15.5.27",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.33"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "typescript": "^5.9.3"
+  }
+}

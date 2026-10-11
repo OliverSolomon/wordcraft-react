@@ -212,6 +212,12 @@ export interface WordcraftOptions {
   aiButton?: boolean;
   /** Called when someone clicks the AI button. */
   onAiButton?: () => void;
+  /**
+   * Offer Version History: clicking the title or File › Info › View Version History calls
+   * `onVersionHistory`. (`<WordcraftEditor versionHistory />` wires this to its panel.)
+   */
+  versionHistory?: boolean;
+  onVersionHistory?: () => void;
   /** Called after edits (coalesced to at most once per frame). */
   onChange?: (info: ChangeInfo) => void;
   /**
@@ -264,6 +270,15 @@ export interface WordcraftEditor {
   setAiButton(on: boolean): void;
   /** Replace the AI button listener (or remove it with `null`). */
   setOnAiButton(cb: (() => void) | null): void;
+  /** Turn Version History's entry points (title click, File › Info) on or off. */
+  setVersionHistory(on: boolean): void;
+  /** Replace the Version History listener. */
+  setOnVersionHistory(cb: (() => void) | null): void;
+  /**
+   * Replace the document's content with another version of it, keeping its name and file, as
+   * one undoable step (Version History's Restore). Default format: WordCraft JSON.
+   */
+  restoreContent(bytes: Uint8Array, format?: ExportFormat | string): void;
   /** Whether AutoSave is on. */
   isAutoSaving(): boolean;
   /** Turn AutoSave on or off (needs `onSave`); returns whether it is now on. */
@@ -325,11 +340,13 @@ interface RawHandle {
   getMode(): string;
   setDisabledCommands(json: string): void;
   setCloudFonts(json: string): void;
-  setOnFontRequest(cb: ((family: string) => void) | null): void;
+  setOnFontRequest(cb: ((family: string, preview?: boolean) => void) | null): void;
+  setVersionHistory?(on: boolean): void;
   addFont(bytes: Uint8Array): number;
   hasFont(family: string): boolean;
   documentFonts(): string;
   setAiButton?(on: boolean): void;
+  restoreContent?(name: string, bytes: Uint8Array): void;
   setOnHostEvent?(cb: ((event: string) => void) | null): void;
   collabStart(clientId: number, state: Uint8Array | null): boolean;
   collabApply(update: Uint8Array): void;
@@ -415,6 +432,8 @@ export { googleFonts } from './fonts.js';
 export { describeAiRequest } from './ai-core.js';
 export type { AiAction, AiRequest } from './ai-core.js';
 export { AI_PROVIDERS, AI_SYSTEM_PROMPT, aiSystemPrompt, aiUserMessage, completeWith } from './ai-providers.js';
+export { browserVersionStore, httpVersionStore, memoryVersionStore, newVersionId, pruneVersions } from './versions.js';
+export type { VersionHistoryOptions, VersionMeta, VersionStore } from './versions.js';
 export { BUILT_IN_PALETTES, BUILT_IN_SKILLS, HUMANISER, applyLetterhead, applyPalette, parseSkillMarkdown, studioInstructions } from './ai-studio.js';
 export type { AiSkill, AiStudioState, Letterhead, Palette } from './ai-studio.js';
 export type { AiProviderConfig, AiProviderId } from './ai-providers.js';
@@ -491,18 +510,22 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
   // recently used fonts in this browser.
   const sources = options.fonts === false ? [] : Array.isArray(options.fonts) ? options.fonts : [options.fonts ?? googleFonts()];
   const owner = new Map<string, FontSource>();
+  // Per family: the regular face alone (a font-box preview) or every face.
   const loading = new Map<string, Promise<void>>();
-  const fetchFont = (family: string) => {
+  const previews = new Map<string, Promise<void>>();
+  const add = (files: Uint8Array[]) => {
+    if (destroyed) return;
+    for (const f of files) raw.addFont(f);
+  };
+  const fetchFont = (family: string): Promise<void> => {
     const src = owner.get(family);
-    if (!src || raw.hasFont(family)) return Promise.resolve();
+    if (!src) return Promise.resolve();
     let p = loading.get(family);
     if (!p) {
-      p = src
-        .load(family)
-        .then((files) => {
-          if (destroyed) return;
-          for (const f of files) raw.addFont(f);
-        })
+      const preview = previews.get(family);
+      // With the preview's regular face already in, fetch only the other faces.
+      p = (preview ? preview.then(() => src.load(family, { faces: raw.hasFont(family) ? 'others' : 'all' })) : src.load(family))
+        .then(add)
         .catch((e) => {
           loading.delete(family);
           console.warn(`[wordcraft] font ${family}:`, e);
@@ -511,8 +534,36 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     }
     return p;
   };
+  // Font-box previews: a few at a time, so scrolling the list never floods the network.
+  const previewQueue: string[] = [];
+  let previewsRunning = 0;
+  const pumpPreviews = () => {
+    while (previewsRunning < 4 && previewQueue.length && !destroyed) {
+      const family = previewQueue.shift()!;
+      const src = owner.get(family);
+      if (!src || loading.has(family) || previews.has(family)) continue;
+      previewsRunning++;
+      const p = src
+        .load(family, { faces: 'regular' })
+        .then(add)
+        .catch(() => undefined)
+        .finally(() => {
+          previewsRunning--;
+          pumpPreviews();
+        });
+      previews.set(family, p);
+    }
+  };
+  const previewFont = (family: string) => {
+    if (owner.has(family) && !loading.has(family) && !previews.has(family) && !previewQueue.includes(family)) {
+      // Newest first: the rows on screen now matter more than ones scrolled past.
+      previewQueue.unshift(family);
+      if (previewQueue.length > 40) previewQueue.length = 40;
+      pumpPreviews();
+    }
+  };
   if (sources.length) {
-    raw.setOnFontRequest((family) => void fetchFont(family));
+    raw.setOnFontRequest((family, preview) => void (preview ? previewFont(family) : fetchFont(family)));
     Promise.all(sources.map(async (src) => ({ src, names: await src.families() })))
       .then((lists) => {
         if (destroyed) return;
@@ -555,10 +606,13 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
 
   // Events from WordCraft's UI meant for the page.
   let onAi: (() => void) | null = options.onAiButton ?? null;
+  let onVersions: (() => void) | null = options.onVersionHistory ?? null;
   raw.setOnHostEvent?.((event) => {
     if (event === 'ai') onAi?.();
+    if (event === 'versions') onVersions?.();
   });
   if (options.aiButton) raw.setAiButton?.(true);
+  if (options.versionHistory) raw.setVersionHistory?.(true);
 
   raw.setOnChange(options.onChange ?? null);
   raw.setOnSave(wrapSave(options.onSave));
@@ -666,6 +720,18 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     },
     setOnAiButton(cb) {
       onAi = cb;
+    },
+    setVersionHistory(on) {
+      alive();
+      raw.setVersionHistory?.(on);
+    },
+    setOnVersionHistory(cb) {
+      onVersions = cb;
+    },
+    restoreContent(bytes, format = 'json') {
+      alive();
+      if (!raw.restoreContent) throw new Error('This build of WordCraft cannot restore versions.');
+      raw.restoreContent(exportName(format), bytes);
     },
     setDisabledCommands(commands) {
       alive();

@@ -7,17 +7,22 @@
  * renders a sized container on the server and mounts WordCraft in an effect on the client, so it
  * needs no `dynamic(..., { ssr: false })` wrapper.
  */
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 
 import { chromePrefs, createWordcraft, hiddenTabsFor } from './core.js';
 import { AiBar } from './ai.js';
+import { VersionHistory } from './history.js';
+import type { VersionHistoryHandle } from './history.js';
+import type { VersionHistoryOptions } from './versions.js';
 import type { AiOptions } from './ai.js';
 import type { ChangeInfo, Collaboration, DocumentSource, EditorMode, FontSource, RibbonDisplay, RibbonTab, SavedFile, WordcraftEditor as Editor, WordcraftOptions, WordcraftPrefs, WordcraftUser } from './core.js';
 
 export * from './core.js';
 export { AiBar, AiStar, ExtraTag, aiReady, insertText, AI_PROVIDERS, completeWith } from './ai.js';
 export * from './ai-studio.js';
+export { VersionHistory } from './history.js';
+export type { VersionHistoryHandle, VersionHistoryProps } from './history.js';
 export type { AiBarProps, AiOptions, AiProviderConfig, AiProviderId } from './ai.js';
 
 export interface WordcraftEditorProps {
@@ -72,6 +77,16 @@ export interface WordcraftEditorProps {
    * Anthropic or Gemini key. `true` means only people's own keys.
    */
   ai?: AiOptions | boolean | null;
+  /**
+   * Version history like Google Docs (an Extra): versions are recorded as people work, and a panel
+   * lists them to view, restore, name or download. Opens from the title, File › Info and
+   * Ctrl+Alt+Shift+H. `true` keeps versions in this browser; pass `{ store }` to keep them on
+   * your server (`httpVersionStore`, or your own `VersionStore`). Read once, on mount.
+   */
+  versionHistory?: boolean | VersionHistoryOptions;
+  /** Open or close the version history panel (controlled). */
+  versionsOpen?: boolean;
+  onVersionsOpenChange?: (open: boolean) => void;
   /** Open or close the AI bar (controlled). Leave unset to let the star button toggle it. */
   aiOpen?: boolean;
   onAiOpenChange?: (open: boolean) => void;
@@ -118,6 +133,17 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
     latest.current.onAiOpenChange?.(v);
   };
   const ai: AiOptions | null = props.ai === true ? {} : props.ai ? props.ai : null;
+  const [versionsOpenState, setVersionsOpenState] = useState(false);
+  const versionsOpen = props.versionsOpen ?? versionsOpenState;
+  const setVersionsOpen = useCallback((v: boolean) => {
+    setVersionsOpenState(v);
+    latest.current.onVersionsOpenChange?.(v);
+  }, []);
+  const history = useRef<VersionHistoryHandle>(null);
+  const versionOptions = useMemo<VersionHistoryOptions | null>(
+    () => (props.versionHistory === true ? {} : props.versionHistory ? props.versionHistory : null),
+    [], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   // Latest props for callbacks, so changing a handler never remounts the editor.
   const latest = useRef(props);
@@ -146,8 +172,14 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
       fonts: p.fonts,
       prefs: mergedPrefs(p),
       aiButton: !!(p.ai && p.ai !== true && p.ai.ribbonButton),
+      versionHistory: !!p.versionHistory,
       onChange: (info) => instance && latest.current.onChange?.(info, instance),
-      onSave: p.onSave ? (file) => (instance ? latest.current.onSave?.(file, instance) : undefined) : undefined,
+      onSave: p.onSave
+        ? (file) => {
+            if (file.reason === 'save') void history.current?.record('save');
+            return instance ? latest.current.onSave?.(file, instance) : undefined;
+          }
+        : undefined,
     })
       .then((ed) => {
         if (cancelled) {
@@ -176,7 +208,14 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
   const hasOnSave = !!props.onSave;
   useEffect(() => {
     if (!editor || editor.destroyed) return;
-    editor.setOnSave(hasOnSave ? (file) => latest.current.onSave?.(file, editor) : null);
+    editor.setOnSave(
+      hasOnSave
+        ? (file) => {
+            if (file.reason === 'save') void history.current?.record('save');
+            return latest.current.onSave?.(file, editor);
+          }
+        : null,
+    );
   }, [editor, hasOnSave]);
 
   // The person editing.
@@ -196,6 +235,13 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
     editor.setAiButton(hasAi);
     editor.setOnAiButton(hasAi ? () => setAiOpen(!aiOpenRef.current) : null);
   }, [editor, hasAi]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Version history: the title and File › Info open the panel.
+  useEffect(() => {
+    if (!editor || editor.destroyed || !versionOptions) return;
+    editor.setOnVersionHistory(() => setVersionsOpen(true));
+    return () => editor.setOnVersionHistory(null);
+  }, [editor, versionOptions, setVersionsOpen]);
 
   // Co-editing.
   const collaboration = props.collaboration ?? null;
@@ -246,7 +292,19 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
       style={{ position: 'relative', width: '100%', height, overflow: 'hidden', ...style }}
     >
       {!editor && !error && loading}
-      {editor && ai && (
+      {editor && versionOptions && (
+        <VersionHistory
+          ref={history}
+          editor={editor}
+          options={versionOptions}
+          user={userOf(props)}
+          open={versionsOpen}
+          onOpenChange={setVersionsOpen}
+          dark={props.dark ?? props.prefs?.dark}
+          wasmUrl={props.wasmUrl}
+        />
+      )}
+      {editor && ai && !versionsOpen && (
         <AiBar
           editor={editor}
           options={ai}

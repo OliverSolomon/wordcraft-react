@@ -99,6 +99,8 @@ export function DocumentEditor() {
         hiddenTabs={lean ? ['Mailings', 'Zotero'] : []}
         disabledCommands={lean ? ['file.open'] : []}
         ai={aiSource === 'app' ? ai : aiSource === 'own' ? true : null}
+        // Version history like Google Docs, kept in this browser (pass { store } for a server).
+        versionHistory={{ documentId: 'example', interval: 60_000 }}
         autoSave
         height="calc(100vh - 110px)"
         style={{ borderRadius: 8, border: '1px solid #ddd' }}

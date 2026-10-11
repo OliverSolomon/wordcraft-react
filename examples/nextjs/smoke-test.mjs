@@ -116,6 +116,55 @@ try {
   assert.ok(openRefused, 'turned-off commands are refused');
   await page.click('text=Hide Mailings, Zotero, Open');
 
+  // Font previews: opening the font box fetches the regular face of the web fonts on screen, so
+  // each name is drawn in its own font.
+  if (process.env.SMOKE_FONTS !== '0') {
+    await page.evaluate(() => {
+      window.scrollTo(0, 0);
+      window.wordcraft.setPrefs({ tab: 'Home' });
+    });
+    await page.waitForTimeout(500);
+    await page.mouse.move(302, 217);
+    await page.waitForTimeout(200);
+    await page.mouse.click(302, 217);
+    await page.waitForFunction(() => window.wordcraft.hasFont('ABeeZee') || window.wordcraft.hasFont('Abel'), null, { timeout: 30_000 });
+    await page.waitForTimeout(1000);
+    await page.screenshot({ path: 'smoke-font-previews.png' });
+    await page.keyboard.press('Escape');
+    await page.mouse.click(700, 600);
+  }
+
+  // The mini toolbar shows straight after a double-click (it used to wait for another mouse-up).
+  await page.mouse.dblclick(560, 560);
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: 'smoke-mini-toolbar.png' });
+  await page.mouse.click(700, 600);
+
+  // Version history (an Extra): the title opens it; name a version, change the document, view the
+  // version, restore it, and undo the restore.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.mouse.move(700, 151);
+  await page.waitForTimeout(300);
+  await page.mouse.click(700, 151);
+  await page.waitForSelector('.wcvh-panel', { timeout: 5_000 });
+  await page.click('.wcvh-link:has-text("Name current version")');
+  await page.fill('.wcvh-input', 'Smoke snapshot');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.wcvh-name:has-text("Smoke snapshot")', { timeout: 10_000 });
+  await page.evaluate(() => {
+    window.wordcraft.execute('caret.docEnd');
+    window.wordcraft.execute('text.insert', { text: ' AFTER-SNAPSHOT' });
+  });
+  await page.click('.wcvh-item:has(.wcvh-name:has-text("Smoke snapshot"))');
+  await page.waitForSelector('.wcvh-preview-doc canvas', { timeout: 60_000 });
+  await page.waitForSelector('.wcvh-loading', { state: 'detached', timeout: 60_000 });
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: 'smoke-versions.png' });
+  await page.click('.wcvh-banner button:has-text("Restore this version")');
+  await page.waitForFunction(() => !window.wordcraft.getText().includes('AFTER-SNAPSHOT'), null, { timeout: 10_000 });
+  await page.evaluate(() => window.wordcraft.undo());
+  await page.waitForFunction(() => window.wordcraft.getText().includes('AFTER-SNAPSHOT'), null, { timeout: 5_000 });
+
   // AI (an Extra): the sparkle at the bottom centre opens the bar; /api/ai streams a canned answer
   // when WORDCRAFT_FAKE_AI=1. AI Studio's Humaniser is on by default and reaches the request.
   if (process.env.WORDCRAFT_FAKE_AI === '1') {

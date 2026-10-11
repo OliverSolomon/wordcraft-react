@@ -83,9 +83,10 @@ jobs:
             exit 0
           fi
           cd packages/wordcraft-react
-          v=$(npm version patch --no-git-tag-version | tr -d v)
+          v=$(npm version patch --no-git-tag-version | tr -d v)   # docs/VERSIONING.md: every release bumps the patch number
           cd ../..
-          git add -A Cargo.toml Cargo.lock UPSTREAM_REV crates patches packages/wordcraft-react/package.json packages/wordcraft-react/package-lock.json
+          python3 scripts/changelog.py sync "$v" "$short" "$log"
+          git add -A Cargo.toml Cargo.lock UPSTREAM_REV crates patches CHANGELOG.md packages/wordcraft-react/package.json packages/wordcraft-react/package-lock.json
           git commit -m "Release $v: sync upstream WordCraft to $short" -m "Upstream changes: $log"
           git tag "v$v"
           git push origin HEAD:main "v$v"

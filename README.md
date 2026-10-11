@@ -37,7 +37,7 @@ The component is marked `'use client'` and starts the editor inside an effect. O
 
 If you would rather serve the binary yourself (from a CDN, say, or from `public/`), copy `node_modules/@gamine/wordcraft-react/wasm/wordcraft_embed_bg.wasm` and pass `wasmUrl="/wordcraft_embed_bg.wasm"`. Serve it as `application/wasm` with gzip or Brotli. Compression takes it from about 30 MB to about 12 MB with gzip, and less with Brotli. When a bundler emits the file, its name carries a content hash, so it can be cached indefinitely. If you copy it yourself, the name doesn't change between releases, so give it a cache lifetime that matches your deploys.
 
-A complete example app lives in [`examples/nextjs`](examples/nextjs).
+A complete example app lives in [`examples/nextjs`](examples/nextjs). The documentation site, with a live demo of every feature, is at **[oliversolomon.github.io/wordcraft-react](https://oliversolomon.github.io/wordcraft-react/)** (source in [`site/`](site)).
 
 ## Component props
 
@@ -54,6 +54,8 @@ A complete example app lives in [`examples/nextjs`](examples/nextjs).
 | `disabledCommands` | `string[]` | Commands to turn off, by id from `editor.commands()` or by prefix (`'mailings.*'`, `'file.open'`). They're greyed in the ribbon and refused from shortcuts, menus and `execute`. |
 | `fonts` | `FontSource \| FontSource[] \| false` | Fonts offered in the font box on demand. The default is `googleFonts()`, the whole Google Fonts library, fetched when first picked or when a document uses one. `false` keeps to the built-in fonts. |
 | `ai` ✦ Extra | `AiOptions` or `true` | A sparkle at the bottom centre opens a Gemini-style AI bar with AI Studio (skills with the Humaniser on by default, letterheads, palettes, model). Works with your endpoint, a provider key, or people's own OpenRouter/OpenAI/Anthropic/Gemini key. See [AI](#ai-extra). |
+| `versionHistory` ✦ Extra | `boolean` or `{ store?, documentId?, interval?, max? }` | Version history like Google Docs: versions recorded as people work, in a panel to view, restore, name, download or delete. Opens from the title bar, File › Info and Ctrl+Alt+Shift+H. See [Version history](#version-history-extra). |
+| `versionsOpen`, `onVersionsOpenChange` | | Open or close the version history panel yourself. |
 | `collaboration` | | Real-time co-editing, e.g. `yjsCollaboration({ doc, provider })`. See [Co-editing](#co-editing). |
 | `dark`, `prefs` | | UI preferences, applied live: ribbon `tab`, `dark`, `darkPage`, `language`, `showDiscord`. |
 | `renderer` | `'auto' \| 'webgl'` | Uses WebGPU and falls back to WebGL2. Pass `webgl` to force WebGL2. |
@@ -87,6 +89,7 @@ editor.getMode(); editor.setMode('viewing');
 editor.setTabs(['File', 'Home', 'Insert', 'Review']);
 editor.setDisabledCommands(['mailings.*', 'file.open']);
 editor.addFont(ttfBytes); editor.hasFont('Lato');
+editor.restoreContent(versionBytes);   // replace the content with another version, one undoable step
 editor.destroy();
 ```
 
@@ -100,7 +103,7 @@ Several people can edit one document at once, the way Word's co-authoring works:
 - **Structure.** Paragraph splits, tables, headers, footers, notes, comments, pictures and document settings are all shared.
 - **Undo.** Ctrl+Z and the Undo button take back only your own changes, not other people's.
 - **Presence.** Everyone else's cursor and selection show on the page in their colour with a name flag, and their avatars appear in the title bar.
-- **Saving.** AutoSave writes the merged document over the one shared file, so nobody's save overwrites anyone else's work. Keep earlier versions on your server if you want version history; the example does.
+- **Saving.** AutoSave writes the merged document over the one shared file, so nobody's save overwrites anyone else's work. Turn on `versionHistory` with a server store to keep earlier versions everyone can see.
 
 It runs on [Yjs](https://yjs.dev), so any Yjs provider can carry it: y-websocket, Hocuspocus, Liveblocks, PartyKit, y-webrtc, or your own. Install `yjs` and a provider, then:
 
@@ -134,7 +137,7 @@ The first person to open a document shares whatever the editor has open (pass th
 
 ## Fonts
 
-The browser build bundles a handful of fonts, so the font box also offers fonts on demand, the way Word offers cloud fonts. By default that's the Google Fonts library (about 1,970 openly licensed families). A font downloads from the Fontsource CDN the first time someone picks it, or when an opened document uses it. The font box lists Theme Fonts, Recently Used Fonts and All Fonts, as Word does, and remembers recently used fonts in the browser.
+The browser build bundles a handful of fonts, so the font box also offers fonts on demand, the way Word offers cloud fonts. By default that's the Google Fonts library (about 1,970 openly licensed families). A font downloads from the Fontsource CDN the first time someone picks it, or when an opened document uses it. The font box lists Theme Fonts, Recently Used Fonts and All Fonts, as Word does, shows each name in its own font, and remembers recently used fonts in the browser. To preview a web font it fetches just its regular face, and only for the rows on screen.
 
 ```tsx
 import { googleFonts } from '@gamine/wordcraft-react';
@@ -150,6 +153,9 @@ Everything in this package matches Word and WordCraft, except features marked **
 - ✦ **AI writing and AI Studio** (below).
 - ✦ **Real-time co-editing** with per-person undo and live cursors ([Co-editing](#co-editing)). Word has this; WordCraft does not yet.
 - ✦ **Fonts on demand** from the Google Fonts library ([Fonts](#fonts)).
+- ✦ **Version history** in the style of Google Docs ([Version history](#version-history-extra)). Word has version history for files in OneDrive; WordCraft has none.
+
+The full list of differences from WordCraft, Extras or not, is in [docs/DIVERGENCES.md](docs/DIVERGENCES.md).
 
 ## AI (Extra)
 
@@ -203,6 +209,25 @@ The first of these that is set up is used:
 
 Other options: `launcher: 'none'` hides the sparkle (control the bar with the `aiOpen` and `onAiOpenChange` props), `ribbonButton: true` adds a sparkle beside Comments in the ribbon, `studio: false` hides skills, letterhead and palette, and `onStudioChange` reports AI Studio's settings so you can keep them on your server.
 
+## Version history (Extra)
+
+`versionHistory` records versions of the document as people work, like Google Docs: every few minutes while it changes (`interval`, default 5 minutes), on each save, and before a restore. Clicking the title (as in Word), File › Info › View Version History, or Ctrl+Alt+Shift+H opens a panel on the right:
+
+- **The list:** versions grouped by day, each with its time, author and word count. The current version sits at the top, with "Name current version". A switch shows only named versions.
+- **Viewing:** clicking a version shows it read only in place of the document, with **Restore this version** and **Back to current version** above it.
+- **Each version's ⋮ menu:** Restore, Name or Rename, Download a copy (.docx), Delete. Named versions are never pruned; unnamed ones beyond `max` (default 200) are.
+- **Restoring:** the current content is saved as a version first, and the restore itself is a single step that Ctrl+Z undoes. With co-editing, the restore reaches everyone.
+
+Versions are kept in WordCraft's own JSON format, so they hold everything in the document exactly. By default they stay in this browser (IndexedDB), separately per `documentId`. To share them between people and devices, keep them on your server:
+
+```tsx
+import { WordcraftEditor, httpVersionStore } from '@gamine/wordcraft-react';
+
+<WordcraftEditor versionHistory={{ store: httpVersionStore(`/api/documents/${id}/versions`) }} />
+```
+
+`httpVersionStore(url)` expects `GET url` (the list), `GET url/:id` (the bytes), `PUT url/:id` (the bytes, with the metadata as JSON in an `x-version-meta` header), `PATCH url/:id` (`{ name }`) and `DELETE url/:id`. Or implement `VersionStore` (`list`, `get`, `put`, `rename`, `remove`) over anything you like.
+
 ## Without React
 
 ```ts
@@ -222,9 +247,10 @@ The `/core` entry point has no React dependency, and importing it on the server 
 - **Size.** The binary is about 30 MB, or about 12 MB gzipped, and it's the full application, including its fonts. Load it on the pages that need it, and call `preloadWordcraft()` on hover or route prefetch.
 - **Rendering.** WordCraft draws onto a `<canvas>` with its own UI toolkit (egui), which is why it can match Word's interface pixel for pixel. The flip side is that host CSS can't style what's inside the editor. Use `prefs` (dark mode, language, ribbon) and commands instead.
 - **Keyboard.** As with any embedded app, shortcuts go to the editor once it has focus.
-- **Persistence.** The editor never writes to browser storage. Your app owns the document, and both AutoSave and Save go through `onSave`. You can also call `export()` whenever you like.
-- **Patches on upstream.** The package applies four small patches to WordCraft, listed in [`patches/`](patches). They cover AutoSave on the web, hiding the title bar and ribbon, the co-editing hooks, host controls (tabs, modes, turned-off commands, fonts), and the AI button with Word's ribbon collapse. They're written so they can be offered upstream.
+- **Persistence.** The editor keeps the document out of browser storage. Your app owns it, and both AutoSave and Save go through `onSave`; you can also call `export()` whenever you like. The browser keeps only small conveniences (recently used fonts, AI Studio settings, a key someone added) and, with the default store, version history.
+- **Patches on upstream.** The package applies five small patches to WordCraft, listed in [`patches/`](patches). They cover AutoSave on the web, hiding the title bar and ribbon, the co-editing hooks, host controls (tabs, modes, turned-off commands, fonts), the AI button with Word's ribbon collapse, and Windows-style inline tools, rulers, font previews and Version History's entry points. They're written so they can be offered upstream. [docs/DIVERGENCES.md](docs/DIVERGENCES.md) lists every resulting difference from WordCraft.
 - **How close to Word.** See [docs/WORD-PARITY.md](docs/WORD-PARITY.md).
+- **Versions.** Each release bumps the patch number until a version is declared stable ([docs/VERSIONING.md](docs/VERSIONING.md)); [CHANGELOG.md](CHANGELOG.md) says what each one changed.
 
 ## Repository layout
 
@@ -234,6 +260,7 @@ crates/wordcraft-collab  Rust: WordCraft documents as a Yjs-compatible CRDT (co-
 patches/                 Small hooks applied on top of upstream by scripts/prepare-upstream.sh
 packages/wordcraft-react TypeScript: createWordcraft() core, <WordcraftEditor />, and /collab (Yjs)
 examples/nextjs          Next.js App Router example, including /collab (co-editing) and its shared-file API
+site/                    Documentation and showcase site (Next.js, static, deployed to GitHub Pages)
 scripts/build-wasm.sh    Builds the .wasm into packages/wordcraft-react/wasm
 scripts/sync-upstream.py Pins a newer upstream WordCraft commit, dependencies 1:1 with upstream
 examples/nextjs/smoke-*.mjs     Headless-browser tests: the editor and its API, and two people co-editing
@@ -261,7 +288,7 @@ The **Upstream sync** workflow runs every two hours, and you can also start it b
 
 If upstream breaks anything, nothing is published. npm keeps serving the last good version, and the workflow opens an issue that links to the failed run. If you'd rather review each update before it ships, set the repository variable `UPSTREAM_SYNC_MODE` to `pr`, and the workflow will open a pull request instead of publishing.
 
-To release by hand, bump the version in `packages/wordcraft-react/package.json` and push a matching `v*` tag. Publishing needs either an `NPM_TOKEN` repository secret (a granular npm token with publish rights on `@gamine`) or npm trusted publishing configured for this repository's `release.yml`. A version that is already on npm is skipped, so re-running a release is safe.
+To release by hand, bump the patch version in `packages/wordcraft-react/package.json`, add its CHANGELOG.md section, and push to `main`; the Release workflow tags it and publishes the section as the release notes. Publishing needs either an `NPM_TOKEN` repository secret (a granular npm token with publish rights on `@gamine`) or npm trusted publishing configured for this repository's `release.yml`. A version that is already on npm is skipped, so re-running a release is safe.
 
 ## License and credits
 

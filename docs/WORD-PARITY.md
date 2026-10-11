@@ -79,6 +79,7 @@ These are tagged **✦ Extra** in the docs and *Extra* in the editor, because th
 | AI Studio letterhead: organisation details and logo written into the header, used as AI context | No | No |
 | AI Studio palettes: brand colours for the title, headings and letterhead | Theme colours only | Theme colours only |
 | Bring your own AI key: OpenRouter, OpenAI, Anthropic, Gemini or OpenAI-compatible | No | No |
+| Version history panel in the style of Google Docs: view, restore, name, download | For OneDrive files | A command, no interface |
 | Real-time co-editing with per-person undo and cursors | Yes | Not yet |
 | Google Fonts library on demand | Cloud fonts | No |
 

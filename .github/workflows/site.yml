@@ -1,0 +1,65 @@
+# Builds the documentation and demo site (site/) and publishes it to GitHub Pages.
+# It runs after each successful release, so the site always shows the version on npm, and when
+# the site or the docs change on main.
+name: Site
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  push:
+    branches: [main]
+    paths: ['site/**', 'docs/**', 'README.md', 'CHANGELOG.md', '.github/workflows/site.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Use the version published on npm
+        working-directory: site
+        run: |
+          v=$(npm view @gamine/wordcraft-react version)
+          echo "Building the site with @gamine/wordcraft-react@$v"
+          npm pkg set "dependencies.@gamine/wordcraft-react=$v"
+          npm install --no-audit --no-fund
+      - name: Build
+        working-directory: site
+        env:
+          NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
+        run: |
+          npm run typecheck
+          npm run build
+          touch out/.nojekyll
+      - name: Turn on GitHub Pages (Settings > Pages > Source: GitHub Actions, if this can't)
+        uses: actions/configure-pages@v5
+        continue-on-error: true
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
