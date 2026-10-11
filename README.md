@@ -95,7 +95,7 @@ editor.destroy();
 
 `execute` runs the same command registry that WordCraft's ribbon, keyboard shortcuts, CLI and MCP server use, so anything a user can do from the ribbon can also be scripted. Call `editor.commands()` for the full list, including each command's parameters.
 
-## Co-editing
+## Co-editing.
 
 Several people can edit one document at once, the way Word's co-authoring works:
 
