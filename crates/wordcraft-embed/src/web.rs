@@ -240,17 +240,20 @@ impl Shell {
         });
     }
 
+    /// `cb(family, preview)`: a web font was picked (`preview` false: fetch every face), or its
+    /// font-box row is on screen (`preview` true: the regular face is enough to draw its name).
     fn font_requests(&self, app: &mut WordApp) {
-        if app.font_requests.is_empty() {
+        if app.font_requests.is_empty() && app.font_previews.is_empty() {
             return;
         }
-        let families = std::mem::take(&mut app.font_requests);
+        let mut wanted: Vec<(String, bool)> = std::mem::take(&mut app.font_requests).into_iter().map(|f| (f, false)).collect();
+        wanted.extend(std::mem::take(&mut app.font_previews).into_iter().map(|f| (f, true)));
         let shared = self.shared.clone();
         defer(move || {
             let cb = shared.on_font_request.borrow().clone();
             if let Some(cb) = cb {
-                for f in families {
-                    if let Err(e) = cb.call1(&JsValue::NULL, &f.as_str().into()) {
+                for (f, preview) in wanted {
+                    if let Err(e) = cb.call2(&JsValue::NULL, &f.as_str().into(), &preview.into()) {
                         log::error!("wordcraft font request handler threw: {e:?}");
                     }
                 }
@@ -520,6 +523,21 @@ impl WordcraftHandle {
         let data = wordcraft_engine::cmd::insert::base64_encode(bytes);
         self.with_app(|app| {
             app.run("file.open", json!({"path": name, "data": data}))?;
+            app.ui.backstage = false;
+            Ok(())
+        })
+    }
+
+    /// Replace the document's content with another version of it (Version History's Restore),
+    /// keeping its name and file, as one undoable step. `name`'s extension picks the format.
+    #[wasm_bindgen(js_name = restoreContent)]
+    pub fn restore_content(&self, name: &str, bytes: &[u8]) -> Result<(), JsValue> {
+        let doc = wordcraft_engine::io::open_bytes(name, bytes).map_err(|e| JsValue::from_str(&e))?;
+        self.with_app(|app| {
+            app.session.checkpoint("Restore Version");
+            app.session.doc = doc;
+            app.session.touch();
+            app.session.clamp_selection();
             app.ui.backstage = false;
             Ok(())
         })
@@ -878,7 +896,18 @@ impl WordcraftHandle {
         })
     }
 
-    /// `cb(event)` for events from WordCraft's UI meant for the page (`"ai"`).
+    /// Let the page keep the version history: File › Info gets Version History and clicking the
+    /// title opens it, both by sending `"versions"` to the host event handler.
+    #[wasm_bindgen(js_name = setVersionHistory)]
+    pub fn set_version_history(&self, on: bool) -> Result<(), JsValue> {
+        self.with_app(|app| {
+            app.host_versions = on;
+            Ok(())
+        })
+    }
+
+    /// `cb(event)` for events from WordCraft's UI meant for the page: `"ai"` (the AI button) and
+    /// `"versions"` (Version History).
     #[wasm_bindgen(js_name = setOnHostEvent)]
     pub fn set_on_host_event(&self, cb: Option<js_sys::Function>) {
         *self.shared.on_host_event.borrow_mut() = cb;

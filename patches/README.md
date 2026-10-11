@@ -11,6 +11,7 @@ upstream as-is. When upstream accepts one, delete it here.
 | 0002 | Real-time co-editing: Undo and Redo can be handed to the host (so they take back only your own changes), and the title bar shows who else is editing |
 | 0003 | Host controls: which ribbon tabs show, Word's Viewing mode, commands the host turns off, Theme / Recently Used / All Fonts sections and on-demand web fonts in the font box, and clicking a comment to go to its text |
 | 0004 | An AI (sparkle) button beside Comments for hosts that offer AI, and Word's ribbon collapse: the ^ button, and a collapsed ribbon that opens over the page when a tab is clicked, with a pin |
+| 0005 | Windows-style inline tools (the mini toolbar after a double-click, its Grow/Shrink, Bullets, Numbering and New Comment buttons, and its place above the context menu), rulers that follow the page in view and open Page Setup on a double-click, font-box previews for web fonts, and Version History's entry points (the title, which reads "Name • Saved", and File › Info) |
 
 The patches were made against the upstream commit in `BASE`. Every sync rebases them onto the new
 upstream with a three-way merge and refreshes them, so they only need a person when both sides
