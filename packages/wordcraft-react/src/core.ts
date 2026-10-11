@@ -124,6 +124,20 @@ export interface Collaboration {
 /** Word's Ribbon Display Options. */
 export type RibbonDisplay = 'full' | 'tabs' | 'hidden';
 
+/** The ribbon's tabs (contextual tabs like Table Design come and go by themselves). */
+export type RibbonTab = 'File' | 'Home' | 'Insert' | 'Draw' | 'Design' | 'Layout' | 'References' | 'Mailings' | 'Review' | 'View' | 'Zotero' | 'Help';
+export const RIBBON_TABS: RibbonTab[] = ['File', 'Home', 'Insert', 'Draw', 'Design', 'Layout', 'References', 'Mailings', 'Review', 'View', 'Zotero', 'Help'];
+
+/** Word's mode switch: edit directly, edit as tracked suggestions, or only read. */
+export type EditorMode = 'editing' | 'reviewing' | 'viewing';
+
+/** The tabs to hide, given the tabs to show and/or the tabs to hide. */
+export function hiddenTabsFor(show: RibbonTab[] | undefined, hide: RibbonTab[] | undefined): RibbonTab[] {
+  const out = new Set<RibbonTab>(hide ?? []);
+  if (show) for (const t of RIBBON_TABS) if (!show.includes(t)) out.add(t);
+  return [...out];
+}
+
 /** The UI preferences that show or hide the title bar and ribbon. */
 export function chromePrefs(titleBar: boolean | undefined, ribbon: RibbonDisplay | undefined): Partial<WordcraftPrefs> {
   const out: Partial<WordcraftPrefs> = {};
@@ -178,6 +192,22 @@ export interface WordcraftOptions {
   titleBar?: boolean;
   /** Ribbon Display Options: `full` (default), `tabs` (tabs only) or `hidden`. */
   ribbon?: RibbonDisplay;
+  /** The ribbon tabs to offer, e.g. `['File', 'Home', 'Insert', 'Review']`. Default: all. */
+  tabs?: RibbonTab[];
+  /** Ribbon tabs to leave out, e.g. `['Mailings', 'Zotero']`. */
+  hiddenTabs?: RibbonTab[];
+  /** Start in `editing` (default), `reviewing` (Track Changes) or `viewing` (read only). */
+  mode?: EditorMode;
+  /**
+   * Commands to turn off: ids from `editor.commands()`, or prefixes ending in `*`
+   * (`'mailings.*'`, `'file.open'`). They're greyed in the ribbon and refused everywhere.
+   */
+  disabledCommands?: string[];
+  /**
+   * Fonts offered on demand in the font box (fetched the first time someone picks one).
+   * Default: `googleFonts()`, the Google Fonts library. `false` offers only the built-in fonts.
+   */
+  fonts?: FontSource | FontSource[] | false;
   /** Called after edits (coalesced to at most once per frame). */
   onChange?: (info: ChangeInfo) => void;
   /**
@@ -215,6 +245,17 @@ export interface WordcraftEditor {
   setUser(user: WordcraftUser): void;
   /** Low-level co-editing port (see `@gamine/wordcraft-react/collab`). */
   readonly collab: CollabPort;
+  /** Word's mode switch: `editing`, `reviewing` or `viewing`. */
+  getMode(): EditorMode;
+  setMode(mode: EditorMode): void;
+  /** Change which ribbon tabs show. */
+  setTabs(show?: RibbonTab[], hide?: RibbonTab[]): void;
+  /** Change which commands are turned off (ids or prefixes ending in `*`). */
+  setDisabledCommands(commands: string[]): void;
+  /** Make a font (TTF/OTF bytes) available to documents. */
+  addFont(bytes: Uint8Array): void;
+  /** Whether a font family is available to documents now. */
+  hasFont(family: string): boolean;
   /** Whether AutoSave is on. */
   isAutoSaving(): boolean;
   /** Turn AutoSave on or off (needs `onSave`); returns whether it is now on. */
@@ -272,6 +313,14 @@ interface RawHandle {
   isAutoSaving(): boolean;
   setAutoSave(on: boolean): boolean;
   setPersist(on: boolean): void;
+  setMode(mode: string): void;
+  getMode(): string;
+  setDisabledCommands(json: string): void;
+  setCloudFonts(json: string): void;
+  setOnFontRequest(cb: ((family: string) => void) | null): void;
+  addFont(bytes: Uint8Array): number;
+  hasFont(family: string): boolean;
+  documentFonts(): string;
   collabStart(clientId: number, state: Uint8Array | null): boolean;
   collabApply(update: Uint8Array): void;
   collabState(): Uint8Array;
@@ -350,6 +399,13 @@ export async function toBytes(data: BinaryLike): Promise<Uint8Array> {
 
 const DEFAULT_PREFS: Partial<WordcraftPrefs> = { showDiscord: false };
 
+import { googleFonts, readRecentFonts, writeRecentFonts } from './fonts.js';
+import type { FontSource } from './fonts.js';
+export { googleFonts } from './fonts.js';
+export { describeAiRequest } from './ai-core.js';
+export type { AiAction, AiRequest } from './ai-core.js';
+export type { FontSource, GoogleFontsOptions } from './fonts.js';
+
 /**
  * Mount WordCraft inside `container`. The editor fills the container and follows its size, so
  * give the container a height (WordCraft is a full application: 600px or more works well).
@@ -376,7 +432,13 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     persist: !!options.onSave,
     autoSave: options.autoSave ?? true,
     user: options.user ? { name: options.user.name } : undefined,
-    prefs: { ...DEFAULT_PREFS, ...(options.prefs ?? {}), ...chromePrefs(options.titleBar, options.ribbon) },
+    prefs: {
+      ...DEFAULT_PREFS,
+      recentFonts: readRecentFonts(),
+      ...(options.prefs ?? {}),
+      ...chromePrefs(options.titleBar, options.ribbon),
+      ...(options.tabs || options.hiddenTabs ? { hiddenTabs: hiddenTabsFor(options.tabs, options.hiddenTabs) } : {}),
+    },
   });
 
   let raw: RawHandle;
@@ -407,6 +469,75 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
             .catch((e) => console.error('[wordcraft] onSave failed', e));
         }
       : null;
+
+  if (options.mode && options.mode !== 'editing') raw.setMode(options.mode);
+  if (options.disabledCommands?.length) raw.setDisabledCommands(JSON.stringify(options.disabledCommands));
+
+  // Fonts on demand: list them in the font box, fetch one when it's first picked, and remember the
+  // recently used fonts in this browser.
+  const sources = options.fonts === false ? [] : Array.isArray(options.fonts) ? options.fonts : [options.fonts ?? googleFonts()];
+  const owner = new Map<string, FontSource>();
+  const loading = new Map<string, Promise<void>>();
+  const fetchFont = (family: string) => {
+    const src = owner.get(family);
+    if (!src || raw.hasFont(family)) return Promise.resolve();
+    let p = loading.get(family);
+    if (!p) {
+      p = src
+        .load(family)
+        .then((files) => {
+          if (destroyed) return;
+          for (const f of files) raw.addFont(f);
+        })
+        .catch((e) => {
+          loading.delete(family);
+          console.warn(`[wordcraft] font ${family}:`, e);
+        });
+      loading.set(family, p);
+    }
+    return p;
+  };
+  if (sources.length) {
+    raw.setOnFontRequest((family) => void fetchFont(family));
+    Promise.all(sources.map(async (src) => ({ src, names: await src.families() })))
+      .then((lists) => {
+        if (destroyed) return;
+        for (const { src, names } of lists) for (const n of names) if (!owner.has(n)) owner.set(n, src);
+        raw.setCloudFonts(JSON.stringify([...owner.keys()]));
+        // Fonts picked lately are probably in use: load them now, and the ones the document uses.
+        for (const f of readRecentFonts()) void fetchFont(f);
+        fetchDocumentFonts();
+      })
+      .catch((e) => console.warn('[wordcraft] font list unavailable', e));
+  }
+  // Web fonts the document uses load by themselves, as Word downloads cloud fonts (checked a
+  // moment after edits settle, so typing never waits on it).
+  let fontTimer: ReturnType<typeof setTimeout> | undefined;
+  function fetchDocumentFonts() {
+    if (!owner.size || destroyed) return;
+    try {
+      for (const f of JSON.parse(raw.documentFonts()) as string[]) if (owner.has(f)) void fetchFont(f);
+    } catch {
+      // ignore
+    }
+  }
+  let lastRecent = JSON.stringify(readRecentFonts());
+  const userOnChange = options.onChange;
+  options.onChange = (info) => {
+    try {
+      const recent = (JSON.parse(raw.getPrefs()) as { recentFonts?: string[] }).recentFonts ?? [];
+      const key = JSON.stringify(recent);
+      if (key !== lastRecent) {
+        lastRecent = key;
+        writeRecentFonts(recent);
+      }
+    } catch {
+      // ignore
+    }
+    clearTimeout(fontTimer);
+    fontTimer = setTimeout(fetchDocumentFonts, 1500);
+    userOnChange?.(info);
+  };
 
   raw.setOnChange(options.onChange ?? null);
   raw.setOnSave(wrapSave(options.onSave));
@@ -496,6 +627,30 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
       raw.setUserName(next.name);
       user = { ...next, name: next.name.trim() };
     },
+    getMode() {
+      alive();
+      return raw.getMode() as EditorMode;
+    },
+    setMode(mode) {
+      alive();
+      raw.setMode(mode);
+    },
+    setTabs(show, hide) {
+      alive();
+      raw.setPrefs(JSON.stringify({ hiddenTabs: hiddenTabsFor(show, hide) }));
+    },
+    setDisabledCommands(commands) {
+      alive();
+      raw.setDisabledCommands(JSON.stringify(commands));
+    },
+    addFont(bytes) {
+      alive();
+      raw.addFont(bytes);
+    },
+    hasFont(family) {
+      alive();
+      return raw.hasFont(family);
+    },
     isAutoSaving() {
       alive();
       return raw.isAutoSaving();
@@ -544,7 +699,15 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     },
     setOnChange(cb) {
       alive();
-      raw.setOnChange(cb);
+      // Keep remembering recent fonts behind the new listener.
+      const remember = options.onChange;
+      options.onChange = cb
+        ? (info) => {
+            remember?.(info);
+            cb(info);
+          }
+        : remember;
+      raw.setOnChange(options.onChange ?? null);
     },
     setOnSave(cb) {
       alive();

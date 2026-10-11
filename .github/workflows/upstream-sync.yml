@@ -1,6 +1,6 @@
 # Follow upstream WordCraft automatically.
 #
-# Every day (and on demand) this checks storytold/wordcraft main. When it has moved, the workflow
+# Every two hours (and on demand) this checks storytold/wordcraft main. When it has moved, the workflow
 # pins the new commit (dependencies stay 1:1 with upstream's Cargo.lock), rebuilds the
 # WebAssembly, runs every check including the browser smoke test, and then:
 #   - release mode (default): bumps the patch version, commits, tags and publishes to npm;
@@ -13,7 +13,7 @@ name: Upstream sync
 
 on:
   schedule:
-    - cron: '17 3 * * *' # daily, 06:17 Nairobi
+    - cron: '17 */2 * * *' # every two hours, at :17
   workflow_dispatch:
     inputs:
       rev:

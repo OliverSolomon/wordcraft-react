@@ -87,6 +87,33 @@ pub fn autosave_name(current: Option<&str>, title: &str) -> String {
     }
 }
 
+/// Every font family a document asks for (runs, paragraph marks, styles, theme), sorted.
+pub fn document_fonts(doc: &wordcraft_doc::Document) -> Vec<String> {
+    fn walk(v: &serde_json::Value, out: &mut std::collections::BTreeSet<String>) {
+        match v {
+            serde_json::Value::Object(m) => {
+                for (k, x) in m {
+                    let font_key = matches!(
+                        k.as_str(),
+                        "font" | "fontAscii" | "fontHAnsi" | "fontEastAsia" | "fontCs" | "major" | "minor" | "headingFont" | "bodyFont"
+                    );
+                    match x {
+                        serde_json::Value::String(s) if font_key && !s.trim().is_empty() && !s.starts_with('+') => {
+                            out.insert(s.trim().to_string());
+                        }
+                        _ => walk(x, out),
+                    }
+                }
+            }
+            serde_json::Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
+            _ => {}
+        }
+    }
+    let mut out = std::collections::BTreeSet::new();
+    walk(&serde_json::to_value(doc).unwrap_or(serde_json::Value::Null), &mut out);
+    out.into_iter().collect()
+}
+
 /// The MIME type browsers expect for a file name, by extension.
 pub fn mime_for(name: &str) -> &'static str {
     match name.rsplit('.').next().map(str::to_ascii_lowercase).as_deref() {
@@ -139,6 +166,13 @@ mod tests {
         assert_eq!(autosave_name(Some("notes.md"), "notes"), "notes.docx");
         assert_eq!(autosave_name(Some("brief.odt"), "brief"), "brief.odt");
         assert_eq!(autosave_name(None, "  "), "Document1.docx");
+    }
+
+    #[test]
+    fn document_fonts_are_found_in_runs_and_styles() {
+        let doc = wordcraft_engine::sample::sample_document();
+        let fonts = document_fonts(&doc);
+        assert!(!fonts.is_empty(), "{fonts:?}");
     }
 
     #[test]

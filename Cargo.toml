@@ -16,6 +16,7 @@ rust-version = "1.90"
 wordcraft-engine = { path = "upstream/crates/engine" }
 wordcraft-ui-egui = { path = "upstream/crates/ui-egui" }
 wordcraft-doc = { path = "upstream/crates/doc" }
+wordcraft-fonts = { path = "upstream/crates/fonts" }
 
 [profile.release]
 opt-level = 3

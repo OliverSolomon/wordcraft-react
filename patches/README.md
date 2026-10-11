@@ -7,9 +7,9 @@ upstream as-is. When upstream accepts one, delete it here.
 
 | Patch | Why |
 |---|---|
-| 0001 | AutoSave on the web (the toggle couldn't turn on without a desktop file path), and hiding the title bar and the ribbon for pages that embed WordCraft |
+| 0001 | AutoSave on the web when the host keeps documents (upstream greys it out in the browser), and hiding the title bar and the ribbon |
 | 0002 | Real-time co-editing: Undo and Redo can be handed to the host (so they take back only your own changes), and the title bar shows who else is editing |
-| 0003 | The browser had no clock (`now_ms` returned 0), so the caret never blinked, status messages never cleared and AutoSave never fired |
+| 0003 | Host controls: which ribbon tabs show, Word's Viewing mode, commands the host turns off, Theme / Recently Used / All Fonts sections and on-demand web fonts in the font box, and clicking a comment to go to its text |
 
 If the daily upstream sync reports that a patch no longer applies, rebase it: check out the new
 upstream commit, apply the patch by hand, fix the conflict, and regenerate it with

@@ -1,7 +1,8 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { WordcraftEditor, type WordcraftEditorRef, type ChangeInfo, type RibbonDisplay } from '@gamine/wordcraft-react';
+import { WordcraftEditor, type WordcraftEditorRef, type ChangeInfo, type EditorMode, type RibbonDisplay } from '@gamine/wordcraft-react';
+import { ai } from './ai';
 
 export function DocumentEditor() {
   const editor = useRef<WordcraftEditorRef>(null);
@@ -11,6 +12,8 @@ export function DocumentEditor() {
   const [titleBar, setTitleBar] = useState(true);
   const [ribbon, setRibbon] = useState<RibbonDisplay>('full');
   const [lastSave, setLastSave] = useState<string>('');
+  const [mode, setMode] = useState<EditorMode>('editing');
+  const [lean, setLean] = useState(false);
 
   const download = (format: 'docx' | 'pdf' | 'odt' | 'md') => {
     const blob = editor.current?.exportBlob(format);
@@ -59,6 +62,17 @@ export function DocumentEditor() {
             <option value="hidden">Hidden</option>
           </select>
         </label>
+        <label>
+          Mode{' '}
+          <select aria-label="Mode" value={mode} onChange={(e) => setMode(e.target.value as EditorMode)} style={btn}>
+            <option value="editing">Editing</option>
+            <option value="reviewing">Reviewing</option>
+            <option value="viewing">Viewing</option>
+          </select>
+        </label>
+        <label>
+          <input type="checkbox" checked={lean} onChange={(e) => setLean(e.target.checked)} /> Hide Mailings, Zotero, Open
+        </label>
         <span data-testid="status" style={{ color: '#555' }}>
           rev {status.rev} · {status.dirty ? 'unsaved changes' : 'saved'} {lastSave && `· last save: ${lastSave}`}
         </span>
@@ -71,6 +85,10 @@ export function DocumentEditor() {
         user={{ name: name.trim() || 'Guest', color: '#c2410c' }}
         titleBar={titleBar}
         ribbon={ribbon}
+        mode={mode}
+        hiddenTabs={lean ? ['Mailings', 'Zotero'] : []}
+        disabledCommands={lean ? ['file.open'] : []}
+        ai={ai}
         autoSave
         height="calc(100vh - 110px)"
         style={{ borderRadius: 8, border: '1px solid #ddd' }}

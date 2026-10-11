@@ -10,10 +10,14 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 
-import { chromePrefs, createWordcraft } from './core.js';
-import type { ChangeInfo, Collaboration, DocumentSource, RibbonDisplay, SavedFile, WordcraftEditor as Editor, WordcraftOptions, WordcraftPrefs, WordcraftUser } from './core.js';
+import { chromePrefs, createWordcraft, hiddenTabsFor } from './core.js';
+import { AiBar } from './ai.js';
+import type { AiOptions } from './ai.js';
+import type { ChangeInfo, Collaboration, DocumentSource, EditorMode, FontSource, RibbonDisplay, RibbonTab, SavedFile, WordcraftEditor as Editor, WordcraftOptions, WordcraftPrefs, WordcraftUser } from './core.js';
 
 export * from './core.js';
+export { AiBar, insertText } from './ai.js';
+export type { AiBarProps, AiOptions } from './ai.js';
 
 export interface WordcraftEditorProps {
   /** Document to open when the editor mounts. Changing it later loads the new document. */
@@ -49,6 +53,21 @@ export interface WordcraftEditorProps {
    * object reconnects.
    */
   collaboration?: Collaboration | null;
+  /** The ribbon tabs to offer, e.g. `['File', 'Home', 'Insert', 'Review']`. Changes apply live. */
+  tabs?: RibbonTab[];
+  /** Ribbon tabs to leave out, e.g. `['Mailings', 'Zotero']`. Changes apply live. */
+  hiddenTabs?: RibbonTab[];
+  /** Word's mode switch: `editing` (default), `reviewing` (Track Changes) or `viewing` (read only). */
+  mode?: EditorMode;
+  /** Commands to turn off (ids, or prefixes ending in `*`). Changes apply live. */
+  disabledCommands?: string[];
+  /** Fonts offered on demand; default the Google Fonts library, `false` for built-in fonts only. Read once. */
+  fonts?: FontSource | FontSource[] | false;
+  /**
+   * An AI writing bar at the bottom of the editor, like Google Docs' "Help me write".
+   * `complete` is your function (usually your own API route), so any model works.
+   */
+  ai?: AiOptions | null;
   /** Ask before the tab closes with unsaved changes. Read once, on mount. */
   guardUnload?: boolean;
   /** Where to load the `.wasm` from (CDN or `public/`). Read once, on mount. */
@@ -108,6 +127,9 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
       guardUnload: p.guardUnload,
       user: userOf(p),
       autoSave: p.autoSave,
+      mode: p.mode,
+      disabledCommands: p.disabledCommands,
+      fonts: p.fonts,
       prefs: mergedPrefs(p),
       onChange: (info) => instance && latest.current.onChange?.(info, instance),
       onSave: p.onSave ? (file) => (instance ? latest.current.onSave?.(file, instance) : undefined) : undefined,
@@ -157,6 +179,17 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
     return collaboration.attach(editor);
   }, [editor, collaboration]);
 
+  // Mode and turned-off commands follow their props.
+  useEffect(() => {
+    if (!editor || editor.destroyed || !props.mode || editor.getMode() === props.mode) return;
+    editor.setMode(props.mode);
+  }, [editor, props.mode]);
+  const disabledKey = JSON.stringify(props.disabledCommands ?? []);
+  useEffect(() => {
+    if (!editor || editor.destroyed) return;
+    editor.setDisabledCommands(JSON.parse(disabledKey) as string[]);
+  }, [editor, disabledKey]);
+
   // AutoSave follows the prop when it changes (the title bar toggle can still switch it).
   const firstAutoSave = useRef(props.autoSave);
   useEffect(() => {
@@ -188,6 +221,7 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
       style={{ position: 'relative', width: '100%', height, overflow: 'hidden', ...style }}
     >
       {!editor && !error && loading}
+      {editor && props.ai && <AiBar editor={editor} options={props.ai} dark={props.dark ?? props.prefs?.dark} />}
       {error && (typeof fallback === 'function' ? fallback(error) : (fallback ?? <DefaultFallback error={error} />))}
     </div>
   );
@@ -196,7 +230,8 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
 function mergedPrefs(p: WordcraftEditorProps): Partial<WordcraftPrefs> {
   const out: Partial<WordcraftPrefs> = { ...(p.prefs ?? {}) };
   if (p.dark !== undefined) out.dark = p.dark;
-  return { ...out, ...chromePrefs(p.titleBar, p.ribbon) };
+  const tabs = p.tabs || p.hiddenTabs ? { hiddenTabs: hiddenTabsFor(p.tabs, p.hiddenTabs) } : {};
+  return { ...out, ...chromePrefs(p.titleBar, p.ribbon), ...tabs };
 }
 
 function userOf(p: WordcraftEditorProps): WordcraftUser | undefined {

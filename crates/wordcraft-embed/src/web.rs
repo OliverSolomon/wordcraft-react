@@ -14,7 +14,7 @@ use wordcraft_engine::Session;
 use wordcraft_ui_egui::{Inbox, Services, UiState, WordApp};
 
 use crate::collab::{CollabState, Peer, parse_color};
-use crate::{MountOptions, autosave_name, merge_json, mime_for};
+use crate::{MountOptions, autosave_name, document_fonts, merge_json, mime_for};
 
 const DOC_EXTS: &[&str] = &["docx", "docm", "dotx", "dotm", "doc", "dot", "odt", "rtf", "txt", "md", "html", "htm", "tex", "json"];
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
@@ -42,6 +42,8 @@ struct Shared {
     collab: RefCell<Option<CollabState>>,
     on_collab_update: RefCell<Option<js_sys::Function>>,
     on_collab_cursor: RefCell<Option<js_sys::Function>>,
+    /// `cb(family)` when someone picks a web font that isn't loaded yet.
+    on_font_request: RefCell<Option<js_sys::Function>>,
 }
 
 impl Shared {
@@ -87,6 +89,7 @@ pub async fn mount(
         collab: RefCell::new(None),
         on_collab_update: RefCell::new(None),
         on_collab_cursor: RefCell::new(None),
+        on_font_request: RefCell::new(None),
     });
 
     let mut web_options = eframe::WebOptions::default();
@@ -215,6 +218,25 @@ impl Shell {
 }
 
 impl Shell {
+    /// Web fonts picked in the font box that aren't loaded yet: ask the page to fetch them.
+    fn font_requests(&self, app: &mut WordApp) {
+        if app.font_requests.is_empty() {
+            return;
+        }
+        let families = std::mem::take(&mut app.font_requests);
+        let shared = self.shared.clone();
+        defer(move || {
+            let cb = shared.on_font_request.borrow().clone();
+            if let Some(cb) = cb {
+                for f in families {
+                    if let Err(e) = cb.call1(&JsValue::NULL, &f.as_str().into()) {
+                        log::error!("wordcraft font request handler threw: {e:?}");
+                    }
+                }
+            }
+        });
+    }
+
     /// Co-editing after each frame: share edits, run Undo/Redo, announce the caret, draw peers.
     fn collab_frame(&self, app: &mut WordApp, ui: &egui::Ui) {
         let Ok(mut guard) = self.shared.collab.try_borrow_mut() else { return };
@@ -291,6 +313,7 @@ impl eframe::App for Shell {
         app.ui(ui);
         point_autosave(&self.shared, app);
         self.collab_frame(app, ui);
+        self.font_requests(app);
         self.note_changes(app);
     }
 }
@@ -758,6 +781,78 @@ impl WordcraftHandle {
         Ok(())
     }
 
+    /// Word's mode switch: `editing`, `reviewing` (Track Changes) or `viewing` (no changes).
+    #[wasm_bindgen(js_name = setMode)]
+    pub fn set_mode(&self, mode: &str) -> Result<(), JsValue> {
+        let mode = mode.to_string();
+        self.with_app(|app| app.execute("ui.mode", json!({"mode": mode})).map(|_| ()))
+    }
+
+    /// The current mode: `editing`, `reviewing` or `viewing`.
+    #[wasm_bindgen(js_name = getMode)]
+    pub fn get_mode(&self) -> Result<String, JsValue> {
+        self.with_app(|app| {
+            Ok(if app.session.viewing {
+                "viewing"
+            } else if app.session.doc.settings.track_changes {
+                "reviewing"
+            } else {
+                "editing"
+            }
+            .to_string())
+        })
+    }
+
+    /// Commands turned off in this app (JSON array of ids, or prefixes ending in `*`). They are
+    /// greyed in the ribbon and refused everywhere (shortcuts, menus, `execute`).
+    #[wasm_bindgen(js_name = setDisabledCommands)]
+    pub fn set_disabled_commands(&self, json: &str) -> Result<(), JsValue> {
+        let list: Vec<String> = serde_json::from_str(json).map_err(|e| err(format!("disabled commands: {e}")))?;
+        self.with_app(|app| {
+            app.session.disabled_commands = list;
+            Ok(())
+        })
+    }
+
+    /// Web fonts the font box offers (JSON array of family names), fetched when picked.
+    #[wasm_bindgen(js_name = setCloudFonts)]
+    pub fn set_cloud_fonts(&self, json: &str) -> Result<(), JsValue> {
+        let list: Vec<String> = serde_json::from_str(json).map_err(|e| err(format!("fonts: {e}")))?;
+        self.with_app(|app| {
+            app.cloud_fonts = list;
+            Ok(())
+        })
+    }
+
+    /// `cb(family)` when someone picks a web font that isn't loaded yet; answer with `addFont`.
+    #[wasm_bindgen(js_name = setOnFontRequest)]
+    pub fn set_on_font_request(&self, cb: Option<js_sys::Function>) {
+        *self.shared.on_font_request.borrow_mut() = cb;
+    }
+
+    /// Add a font (TTF or OTF bytes) for documents, then lay the document out again with it.
+    /// Returns how many faces were added.
+    #[wasm_bindgen(js_name = addFont)]
+    pub fn add_font(&self, bytes: Vec<u8>) -> Result<u32, JsValue> {
+        let n = wordcraft_fonts::FontDb::global().add_font(bytes);
+        self.with_app(|app| {
+            app.fonts_changed();
+            Ok(u32::try_from(n).unwrap_or(u32::MAX))
+        })
+    }
+
+    /// Every font family the document asks for, as a JSON array (to fetch web fonts it uses).
+    #[wasm_bindgen(js_name = documentFonts)]
+    pub fn document_fonts(&self) -> Result<String, JsValue> {
+        self.with_app(|app| serde_json::to_string(&document_fonts(&app.session.doc)).map_err(|e| e.to_string()))
+    }
+
+    /// Whether a font family is available to documents now.
+    #[wasm_bindgen(js_name = hasFont)]
+    pub fn has_font(&self, family: &str) -> bool {
+        wordcraft_fonts::FontDb::global().has_family(family)
+    }
+
     /// Did the editor hit an unrecoverable error? (It then stops drawing.)
     #[wasm_bindgen(js_name = hasPanicked)]
     pub fn has_panicked(&self) -> bool {
@@ -771,6 +866,7 @@ impl WordcraftHandle {
         *self.shared.on_save.borrow_mut() = None;
         *self.shared.on_collab_update.borrow_mut() = None;
         *self.shared.on_collab_cursor.borrow_mut() = None;
+        *self.shared.on_font_request.borrow_mut() = None;
         if let Ok(mut c) = self.shared.collab.try_borrow_mut() {
             *c = None;
         }

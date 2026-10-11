@@ -5,6 +5,7 @@ import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { WordcraftEditor, type DocumentSource, type WordcraftEditorRef } from '@gamine/wordcraft-react';
 import { yjsCollaboration } from '@gamine/wordcraft-react/collab';
+import { ai } from '../ai';
 
 const SERVER = process.env.NEXT_PUBLIC_COLLAB_URL ?? 'ws://localhost:1234';
 const NAMES = ['Ada Lovelace', 'Grace Hopper', 'Katherine Johnson', 'Wangari Maathai', 'Margaret Hamilton', 'Hedy Lamarr'];
@@ -63,6 +64,7 @@ export function CollabEditor() {
         document={file ?? undefined}
         user={{ name, color }}
         collaboration={collab?.collaboration}
+        ai={ai}
         height="calc(100vh - 100px)"
         style={{ borderRadius: 8, border: '1px solid #ddd' }}
         onReady={(ed) => Object.assign(window, { wordcraft: ed, wordcraftProvider: collab?.provider })}

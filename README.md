@@ -172,7 +172,7 @@ cd ../../examples/nextjs && npm install && npm run dev
 
 ## Staying in step with upstream
 
-The **Upstream sync** workflow runs every morning (06:17 Nairobi time), and you can also start it by hand from the Actions tab. When storytold/wordcraft has new commits, it:
+The **Upstream sync** workflow runs every two hours, and you can also start it by hand from the Actions tab. When storytold/wordcraft has new commits, it:
 
 1. pins the new commit, re-applies `patches/` on top of it and copies upstream's `Cargo.lock`, so every shared dependency matches upstream exactly;
 2. rebuilds the WebAssembly and runs every check: Rust lints and tests, the package tests, the Next.js example build, and a headless-browser smoke test that starts the editor and exercises the API;

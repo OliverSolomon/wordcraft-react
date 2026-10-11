@@ -4,8 +4,8 @@
 Usage: scripts/sync-upstream.py [<commit sha>]     (default: latest storytold/wordcraft main)
 
 What it does:
-  1. Writes the new commit to UPSTREAM_REV and re-applies patches/*.patch onto it
-     (scripts/prepare-upstream.sh); exits non-zero if a patch no longer applies.
+  1. Writes the new commit to UPSTREAM_REV and rebases patches/*.patch onto it with a three-way
+     merge (scripts/prepare-upstream.sh), refreshing them; exits non-zero on a real conflict.
   2. Copies upstream's Cargo.lock, so every shared crate (egui, wgpu, skrifa, ...) resolves to
      exactly the version upstream ships, then lets cargo add only our own entries.
   3. Re-pins egui / eframe / rfd / wasm-bindgen in crates/wordcraft-embed to upstream's versions.
@@ -68,7 +68,7 @@ def main() -> int:
     # 1. the pinned rev, with our embedding patches applied on top
     (ROOT / "UPSTREAM_REV").write_text(new + "\n")
     try:
-        run(str(ROOT / "scripts/prepare-upstream.sh"), cwd=ROOT)
+        subprocess.run([str(ROOT / "scripts/prepare-upstream.sh")], cwd=ROOT, check=True, env={**os.environ, "UPDATE_PATCHES": "1"})
     except subprocess.CalledProcessError:
         (ROOT / "UPSTREAM_REV").write_text(old + "\n")
         print(f"error: patches/ no longer apply to upstream {new}", file=sys.stderr)

@@ -1,0 +1,468 @@
+From 78e19d01f1457e72b15dfdb2e4e207b9dcffaa0d Mon Sep 17 00:00:00 2001
+From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
+Date: Sun, 11 Oct 2026 06:53:25 +0300
+Subject: [PATCH 3/3] Host controls: ribbon tabs, Viewing mode, turned-off
+ commands, font box sections, comment click
+
+- UiState::hidden_tabs: an embedding host chooses which ribbon tabs show
+  (hiding File also closes the File view).
+- Word's Editing / Reviewing / Viewing switch: Viewing (Session::viewing)
+  refuses every command that changes the document except File ones.
+- Session::disabled_commands: commands a host turned off (ids or prefix*),
+  greyed in the ribbon and refused by Session::run and WordApp::execute.
+- Font box: Theme Fonts, Recently Used Fonts (remembered in UiState) and All
+  Fonts sections, as in Word; WordApp::cloud_fonts lists fonts the host can
+  fetch on demand, picked ones queue in font_requests, fonts_changed relayouts.
+- Clicking a comment card in the Comments pane goes to the text it's about.
+---
+ crates/engine/src/session.rs   | 28 ++++++++++++
+ crates/fonts/src/fontdb.rs     |  5 ++
+ crates/fonts/src/word.rs       | 14 +++++-
+ crates/ui-egui/src/lib.rs      | 84 ++++++++++++++++++++++++++++++++++
+ crates/ui-egui/src/panes.rs    | 10 +++-
+ crates/ui-egui/src/previews.rs |  5 ++
+ crates/ui-egui/src/ribbon.rs   | 42 ++++++++++-------
+ crates/ui-egui/src/widgets.rs  | 21 ++++++++-
+ 8 files changed, 187 insertions(+), 22 deletions(-)
+
+diff --git a/crates/engine/src/session.rs b/crates/engine/src/session.rs
+index 5b6ef7d..5d41dd4 100644
+--- a/crates/engine/src/session.rs
++++ b/crates/engine/src/session.rs
+@@ -256,6 +256,10 @@ pub struct Session {
+     pub external_history: bool,
+     pub history_requests: Vec<bool>,
+     pub external_can: (bool, bool),
++    /// Word's Viewing mode: read, navigate, copy, print and export, but no changes.
++    pub viewing: bool,
++    /// Commands an embedding host turned off: exact ids, or prefixes ending in `*` (`file.*`).
++    pub disabled_commands: Vec<String>,
+     /// Editing inside an equation: which one and the caret in it.
+     pub math: Option<MathEdit>,
+     /// Equations are typed in LaTeX rather than the linear format.
+@@ -353,6 +357,8 @@ impl Session {
+             external_history: false,
+             history_requests: Vec::new(),
+             external_can: (false, false),
++            viewing: false,
++            disabled_commands: Vec::new(),
+             read_aloud: Default::default(),
+             password: None,
+             column: None,
+@@ -470,6 +476,23 @@ impl Session {
+     pub fn close_typing(&mut self) {
+         self.typing_open = false;
+     }
++    /// Why the host's settings refuse command `id` (Viewing mode, or a command it turned off), or
++    /// `None` when it may run. `mutates` is whether the command changes the document.
++    pub fn host_block(&self, id: &str, mutates: bool) -> Option<&'static str> {
++        let off = self.disabled_commands.iter().any(|d| match d.strip_suffix('*') {
++            Some(prefix) => id.starts_with(prefix),
++            None => d == id,
++        });
++        if off {
++            return Some("turned off in this app");
++        }
++        // Viewing: nothing that changes the document, apart from opening, saving and exporting.
++        if self.viewing && mutates && !id.starts_with("file.") && !id.starts_with("view.") {
++            return Some("you're viewing; switch to Editing to make changes");
++        }
++        None
++    }
++
+     pub fn can_undo(&self) -> bool {
+         if self.external_history {
+             return self.external_can.0;
+@@ -604,6 +627,8 @@ impl Session {
+             external_history: _,
+             history_requests: _,
+             external_can: _,
++            viewing: _,
++            disabled_commands: _,
+             // Equation editing mode, like `view`: not part of the document or its history.
+             math: _,
+             math_latex: _,
+@@ -682,6 +707,9 @@ impl Session {
+         if let Some(why) = (spec.enabled)(self) {
+             return Err(CmdError::Disabled(format!("{id}: {why}")));
+         }
++        if let Some(why) = self.host_block(id, spec.mutates) {
++            return Err(CmdError::Disabled(format!("{id}: {why}")));
++        }
+         // Restrict Editing.
+         if spec.mutates
+             && let Some(mode) = self.doc.settings.protection.clone()
+diff --git a/crates/fonts/src/fontdb.rs b/crates/fonts/src/fontdb.rs
+index db1180e..25b5790 100644
+--- a/crates/fonts/src/fontdb.rs
++++ b/crates/fonts/src/fontdb.rs
+@@ -725,6 +725,11 @@ impl FontDb {
+                 added += 1;
+             }
+         }
++        drop(faces);
++        if added > 0 {
++            // A family that resolved to a substitute may be here now.
++            crate::word::clear_resolved();
++        }
+         added
+     }
+ 
+diff --git a/crates/fonts/src/word.rs b/crates/fonts/src/word.rs
+index b4461c0..4902d7e 100644
+--- a/crates/fonts/src/word.rs
++++ b/crates/fonts/src/word.rs
+@@ -157,10 +157,20 @@ fn style_name(bold: bool, italic: bool) -> &'static str {
+     }
+ }
+ 
++type ResolveCache = Mutex<HashMap<(String, bool, bool), Resolved>>;
++static RESOLVED: OnceLock<ResolveCache> = OnceLock::new();
++
++/// Forget memoised resolutions (fonts were added at run time, so a family that resolved to a
++/// substitute may now be installed).
++pub fn clear_resolved() {
++    if let Some(c) = RESOLVED.get() {
++        c.lock().unwrap_or_else(|e| e.into_inner()).clear();
++    }
++}
++
+ /// Resolve `family` with bold/italic to a face (memoised).
+ pub fn resolve(family: &str, bold: bool, italic: bool) -> Resolved {
+-    static CACHE: OnceLock<Mutex<HashMap<(String, bool, bool), Resolved>>> = OnceLock::new();
+-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
++    let cache = RESOLVED.get_or_init(|| Mutex::new(HashMap::new()));
+     let key = (family.to_string(), bold, italic);
+     if let Some(r) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+         return *r;
+diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
+index f186630..f38eb02 100644
+--- a/crates/ui-egui/src/lib.rs
++++ b/crates/ui-egui/src/lib.rs
+@@ -113,6 +113,10 @@ pub struct UiState {
+     pub hide_title_bar: bool,
+     /// Embedded: hide the ribbon including its tab row (Word's "Auto-hide Ribbon").
+     pub hide_ribbon: bool,
++    /// Embedded: ribbon tabs the host doesn't offer (`File`, `Home`, `Insert`, `Draw`, ...).
++    pub hidden_tabs: Vec<String>,
++    /// Fonts picked lately, newest first (Word's "Recently Used Fonts").
++    pub recent_fonts: Vec<String>,
+     /// Editing preferences; the session owns them while running (see [`WordApp::prefs`]).
+     pub editing: wordcraft_engine::Prefs,
+     /// Read Aloud speed (1 = normal) and whether it skips citations and bibliographies.
+@@ -148,6 +152,8 @@ impl Default for UiState {
+             language: i18n::AUTO.into(),
+             hide_title_bar: false,
+             hide_ribbon: false,
++            hidden_tabs: Vec::new(),
++            recent_fonts: Vec::new(),
+             editing: wordcraft_engine::Prefs::default(),
+             read_aloud_rate: 1.0,
+             read_aloud_skip_citations: true,
+@@ -206,6 +212,12 @@ pub struct WordApp {
+     pub autosave: bool,
+     /// Other people editing now (real-time co-editing), shown beside the account avatar.
+     pub collaborators: Vec<Collaborator>,
++    /// Font families the host can fetch on demand (web fonts), listed in the font box with the
++    /// installed ones.
++    pub cloud_fonts: Vec<String>,
++    /// Families picked that aren't installed yet: the host fetches them, adds them with
++    /// `FontDb::add_font`, then calls [`WordApp::fonts_changed`].
++    pub font_requests: Vec<String>,
+     pub word_count: (u64, usize),
+     last_autosave: f64,
+     /// The tab shown before the Equation tab came up (restored when editing ends).
+@@ -278,6 +290,8 @@ impl WordApp {
+             quit_requested: false,
+             autosave: true,
+             collaborators: Vec::new(),
++            cloud_fonts: Vec::new(),
++            font_requests: Vec::new(),
+             word_count: (0, 0),
+             last_autosave: 0.0,
+             equation_prev_tab: None,
+@@ -375,6 +389,11 @@ impl WordApp {
+         if !matches!(id, "ui.openRecipientList" | "mailings.recipients") {
+             self.recipient_list_pending = false;
+         }
++        if id.starts_with("ui.")
++            && let Some(why) = self.session.host_block(id, false)
++        {
++            return Err(format!("{id}: {why}"));
++        }
+         if let Some(r) = self.ui_command(id, &params) {
+             return r;
+         }
+@@ -617,6 +636,22 @@ impl WordApp {
+                 self.pick_picture();
+                 json!({"pending": self.change_picture_target.is_some()})
+             }
++            // Word's Editing / Reviewing / Viewing switch.
++            "ui.mode" => {
++                let mode = s("mode").unwrap_or("editing");
++                let (viewing, track) = match mode {
++                    "viewing" => (true, self.session.doc.settings.track_changes),
++                    "reviewing" => (false, true),
++                    _ => (false, false),
++                };
++                self.session.viewing = viewing;
++                if !viewing && self.session.doc.settings.track_changes != track {
++                    if let Err(e) = self.session.run("review.trackChanges", &json!({"value": track})) {
++                        return Some(Err(e.to_string()));
++                    }
++                }
++                json!({"mode": mode})
++            }
+             "ui.collapseRibbon" => {
+                 self.ui.ribbon_collapsed = !self.ui.ribbon_collapsed;
+                 json!({"collapsed": self.ui.ribbon_collapsed})
+@@ -846,6 +881,52 @@ impl WordApp {
+         self.session.path.is_some() && self.session.path == self.autosave_path
+     }
+ 
++    /// Fonts were added at run time ([`Self::font_requests`]): list them and lay the document out
++    /// again with them.
++    pub fn fonts_changed(&mut self) {
++        self.previews.invalidate_families();
++        self.session.relayout();
++    }
++
++    /// The font box picked `family`: remember it (Word's "Recently Used Fonts", ten at most) and
++    /// ask the host for it if it isn't installed.
++    pub fn font_picked(&mut self, family: &str) {
++        self.ui.recent_fonts.retain(|f| f != family);
++        self.ui.recent_fonts.insert(0, family.to_string());
++        self.ui.recent_fonts.truncate(10);
++        if !wordcraft_fonts::FontDb::global().has_family(family)
++            && self.cloud_fonts.iter().any(|f| f == family)
++            && !self.font_requests.iter().any(|f| f == family)
++        {
++            self.font_requests.push(family.to_string());
++        }
++    }
++
++    /// The font box's list: theme fonts, recently used, then all (installed and on demand), each
++    /// section under a heading, as in Word.
++    pub fn font_box_items(&mut self) -> Vec<String> {
++        use crate::widgets::SECTION;
++        let mut all = self.previews.families();
++        all.extend(self.cloud_fonts.iter().cloned());
++        all.sort_by_key(|a| a.to_lowercase());
++        all.dedup();
++        let mut out = vec![format!("{SECTION}{}", tl!("Theme Fonts"))];
++        out.push(wordcraft_doc::styles::HEADING_FONT.to_string());
++        out.push(wordcraft_doc::styles::BODY_FONT.to_string());
++        if !self.ui.recent_fonts.is_empty() {
++            out.push(format!("{SECTION}{}", tl!("Recently Used Fonts")));
++            out.extend(self.ui.recent_fonts.iter().cloned());
++        }
++        out.push(format!("{SECTION}{}", tl!("All Fonts")));
++        out.extend(all);
++        out
++    }
++
++    /// Whether the host offers ribbon tab `tab`.
++    pub fn tab_shown(&self, tab: &str) -> bool {
++        !self.ui.hidden_tabs.iter().any(|t| t.eq_ignore_ascii_case(tab))
++    }
++
+     /// Let AutoSave write to `path`, as if the user had saved there in this session (`None` stops
+     /// it). For hosts that keep documents themselves, such as a web page embedding WordCraft: on
+     /// the web AutoSave then hands each save to `Services::download`, which the host handles.
+@@ -943,6 +1024,9 @@ impl WordApp {
+         // Keytips are read before layout so the frame paints the new state; badges paint after
+         // the ribbon so they sit on top of it.
+         crate::keytips::logic(self, &ctx);
++        if self.ui.backstage && !self.tab_shown("File") {
++            self.ui.backstage = false;
++        }
+         if self.ui.backstage {
+             backstage::show(self, ui);
+         } else {
+diff --git a/crates/ui-egui/src/panes.rs b/crates/ui-egui/src/panes.rs
+index df88068..04b3493 100644
+--- a/crates/ui-egui/src/panes.rs
++++ b/crates/ui-egui/src/panes.rs
+@@ -282,7 +282,7 @@ fn comments(app: &mut WordApp, ui: &mut Ui) {
+         for c in list.as_array().cloned().unwrap_or_default() {
+             let id = c.get("id").and_then(Value::as_u64).unwrap_or(0);
+             let reply = c.get("parent").is_some_and(|p| !p.is_null());
+-            egui::Frame::NONE.fill(t.input).stroke(Stroke::new(1.0, t.border)).corner_radius(6).inner_margin(8).show(ui, |ui| {
++            let card = egui::Frame::NONE.fill(t.input).stroke(Stroke::new(1.0, t.border)).corner_radius(6).inner_margin(8).show(ui, |ui| {
+                 ui.set_width(ui.available_width());
+                 if reply {
+                     ui.add_space(0.0);
+@@ -324,6 +324,14 @@ fn comments(app: &mut WordApp, ui: &mut Ui) {
+                     }
+                 }
+             });
++            // Clicking a comment (outside its buttons and text) goes to the text it's about, as in Word.
++            if card.response.interact(egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
++                && let Some(a) = c.get("anchor").filter(|a| !a.is_null())
++            {
++                let _ = app.run("caret.set", json!({"pos": a}));
++                app.canvas.scroll_to_caret = true;
++                app.canvas.want_focus = true;
++            }
+             ui.add_space(6.0);
+         }
+     });
+diff --git a/crates/ui-egui/src/previews.rs b/crates/ui-egui/src/previews.rs
+index fce5f36..0404b00 100644
+--- a/crates/ui-egui/src/previews.rs
++++ b/crates/ui-egui/src/previews.rs
+@@ -23,6 +23,11 @@ pub struct Previews {
+ }
+ 
+ impl Previews {
++    /// Forget the cached family list (fonts were added).
++    pub fn invalidate_families(&mut self) {
++        self.families = None;
++    }
++
+     pub fn families(&mut self) -> Vec<String> {
+         if self.families.is_none() {
+             let mut f: Vec<String> = wordcraft_fonts::FontDb::global().families().into_iter().filter(|f| !f.starts_with('.')).collect();
+diff --git a/crates/ui-egui/src/ribbon.rs b/crates/ui-egui/src/ribbon.rs
+index 62381b4..19bf084 100644
+--- a/crates/ui-egui/src/ribbon.rs
++++ b/crates/ui-egui/src/ribbon.rs
+@@ -64,7 +64,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+     }
+     // A contextual tab (Table, Picture Format) may be stored while the selection moved away.
+     {
+-        let mut tabs: Vec<&str> = TABS.to_vec();
++        let mut tabs: Vec<&str> = TABS.iter().copied().filter(|t| app.tab_shown(t)).collect();
+         tabs.extend(contextual_tabs(&app.session));
+         let next = resolve_tab(&app.ui.tab, &tabs);
+         if next != app.ui.tab {
+@@ -78,7 +78,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+         .show(ui, |ui| {
+             ui.horizontal_centered(|ui| {
+                 ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+-                let mut tabs: Vec<&str> = TABS.to_vec();
++                let mut tabs: Vec<&str> = TABS.iter().copied().filter(|t| app.tab_shown(t)).collect();
+                 for ct in contextual_tabs(&app.session) {
+                     if !tabs.contains(&ct) {
+                         tabs.push(ct);
+@@ -127,21 +127,27 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+                         let _ = app.run("ui.backstage", json!({"value": true, "page": "export"}));
+                     }
+                     ui.add_space(6.0);
++                    // Word's mode switch: Editing, Reviewing (Track Changes) or Viewing.
+                     let track = app.session.doc.settings.track_changes;
+-                    let mode = crate::widgets::icon_text_button(
+-                        ui,
+-                        "pencil",
+-                        &format!("{} ▾", if track { tl!("Reviewing") } else { tl!("Editing") }),
+-                        regular(12.0),
+-                    );
++                    let (icon, label) = if app.session.viewing {
++                        ("readMode", tl!("Viewing"))
++                    } else if track {
++                        ("trackChanges", tl!("Reviewing"))
++                    } else {
++                        ("pencil", tl!("Editing"))
++                    };
++                    let mode = crate::widgets::icon_text_button(ui, icon, &format!("{label} ▾"), regular(12.0));
+                     egui::Popup::menu(&mode).show(|ui| {
+-                        if ui.selectable_label(!track, tl!(tl!("Editing — edit the document directly"))).clicked() {
+-                            let _ = app.run("review.trackChanges", json!({"value": false}));
+-                            ui.close();
+-                        }
+-                        if ui.selectable_label(track, tl!(tl!("Reviewing — edits become suggestions"))).clicked() {
+-                            let _ = app.run("review.trackChanges", json!({"value": true}));
+-                            ui.close();
++                        let choices = [
++                            ("editing", tl!("Editing — edit the document directly"), !track && !app.session.viewing),
++                            ("reviewing", tl!("Reviewing — edits become suggestions"), track && !app.session.viewing),
++                            ("viewing", tl!("Viewing — read or print, no changes"), app.session.viewing),
++                        ];
++                        for (mode, text, on) in choices {
++                            if crate::widgets::enabled(app, "ui.mode") && ui.selectable_label(on, text).clicked() {
++                                let _ = app.run("ui.mode", json!({"mode": mode}));
++                                ui.close();
++                            }
+                         }
+                     });
+                     ui.add_space(4.0);
+@@ -279,10 +285,12 @@ fn home(app: &mut WordApp, ui: &mut Ui) {
+         stack(ui, |ui| {
+             crate::widgets::row(ui, |ui| {
+                 let font = st.get("font").and_then(Value::as_str).unwrap_or("").to_string();
+-                let fams = app.previews.families();
++                let fams = app.font_box_items();
+                 let prev = app.previews.font_preview_fn();
+                 if let Some(f) = font_combo(ui, "font", 150.0, &font, &fams, Some(&*prev)) {
+-                    let _ = app.run("format.font", json!({"name": f}));
++                    if app.run("format.font", json!({"name": f})).is_ok() {
++                        app.font_picked(&f);
++                    }
+                 }
+                 let size = st
+                     .get("size")
+diff --git a/crates/ui-egui/src/widgets.rs b/crates/ui-egui/src/widgets.rs
+index b680690..cf3a5b9 100644
+--- a/crates/ui-egui/src/widgets.rs
++++ b/crates/ui-egui/src/widgets.rs
+@@ -76,7 +76,8 @@ fn keytip_badge(ui: &Ui, rect: Rect, id: &str, name: &str) {
+ /// Whether a command exists and is enabled.
+ pub fn enabled(app: &WordApp, id: &str) -> bool {
+     match app.session.registry.get(id) {
+-        Some(s) => (s.enabled)(&app.session).is_none(),
++        Some(s) => (s.enabled)(&app.session).is_none() && app.session.host_block(id, s.mutates).is_none(),
++        None if app.session.host_block(id, false).is_some() => false,
+         // Zotero: one command at a time, and only in the desktop app.
+         None if id.starts_with("ui.zotero.") => app.zotero.busy.is_none() && !cfg!(target_arch = "wasm32"),
+         None => id.starts_with("ui."),
+@@ -365,6 +366,9 @@ pub fn font_combo(
+     combo_impl(ui, id, width, current, items, preview, true)
+ }
+ 
++/// Marks an item of a combo list as a section heading (drawn as a heading, never picked).
++pub const SECTION: char = '\u{1}';
++
+ /// Indices of the `items` matching `query`, ignoring case: exact matches, then the names starting
+ /// with it, then those containing it, each group in list order. A blank query matches everything.
+ pub fn font_matches(query: &str, items: &[String]) -> Vec<usize> {
+@@ -372,8 +376,13 @@ pub fn font_matches(query: &str, items: &[String]) -> Vec<usize> {
+     if q.is_empty() {
+         return (0..items.len()).collect();
+     }
++    let mut seen = std::collections::HashSet::new();
+     let (mut exact, mut prefix, mut inner) = (Vec::new(), Vec::new(), Vec::new());
+     for (i, it) in items.iter().enumerate() {
++        // Headings never match, and a name listed in two sections matches once.
++        if it.starts_with(SECTION) || !seen.insert(it.as_str()) {
++            continue;
++        }
+         let name = it.to_lowercase();
+         if name == q {
+             exact.push(i);
+@@ -464,7 +473,7 @@ fn combo_impl(
+             if enter {
+                 let picked = s.matches.get(s.highlight).and_then(|&i| items.get(i));
+                 out = Some(match picked {
+-                    Some(name) if !text.trim().is_empty() => name.clone(),
++                    Some(name) if !text.trim().is_empty() && !name.starts_with(SECTION) => name.clone(),
+                     _ => text.clone(),
+                 });
+                 s.open = false;
+@@ -575,6 +584,14 @@ fn list_rows<'a>(
+         ui.set_min_width(width + 60.0);
+         for k in range {
+             let Some(it) = item(k) else { continue };
++            // A section heading ("Recently Used Fonts"), not a choice.
++            if let Some(heading) = it.strip_prefix(SECTION) {
++                let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::hover());
++                let t = Tokens::get(ui.ctx());
++                ui.painter().rect_filled(r, 0.0, t.tab_strip);
++                ui.painter().text(pos2(r.min.x + 6.0, r.center().y), Align2::LEFT_CENTER, heading, crate::theme::semibold(11.0), t.text_dim);
++                continue;
++            }
+             let lit = highlight == Some(k);
+             let clicked = match preview {
+                 Some(p) => {
+-- 
+2.43.0
+
