@@ -1,5 +1,5 @@
 /** What each documentation page shows above its text: screenshots, a live example and code. */
-export type LiveKind = 'editor' | 'ai' | 'versions' | 'collab' | 'fonts' | 'api' | 'viewer';
+export type LiveKind = 'editor' | 'ai' | 'versions' | 'collab' | 'fonts' | 'api' | 'viewer' | 'mobile';
 
 export interface Shot {
   src: string;
@@ -32,6 +32,10 @@ export const SHOTS = {
   viewer: shot('viewer', 'Viewing mode with the title bar and ribbon hidden'),
   api: shot('api', 'Running editor commands from code'),
   playground: shot('playground', 'The playground with every prop'),
+  mobile: shot('mobile-page', 'The phone layout: title bar, the page in Mobile View and the quick bar'),
+  mobilePalette: shot('mobile-palette', 'The command palette open on Home, with the font boxes'),
+  mobileSelect: shot('mobile-select', 'A long-pressed word with handles and the floating toolbar'),
+  mobileTable: shot('mobile-table', 'Insert Table as a page inside the palette'),
 };
 
 export const SHOWCASES: Record<string, Showcase> = {
@@ -119,5 +123,25 @@ const provider = new WebsocketProvider('wss://collab.example.com', 'brief-42', d
     code: `import { googleFonts } from '@gamine/wordcraft-react';
 
 <WordcraftEditor fonts={googleFonts({ categories: ['serif', 'sans-serif'] })} />`,
+  },
+  mobile: {
+    shots: [SHOTS.mobile, SHOTS.mobilePalette, SHOTS.mobileSelect, SHOTS.mobileTable],
+    live: 'mobile',
+    caption: 'On a phone the editor takes the shape of Word for Android: drag to scroll, long-press to select, and one command palette at the bottom. Foldables switch live.',
+    code: `'use client';
+import { useRouter } from 'next/navigation';
+import { WordcraftEditor } from '@gamine/wordcraft-react';
+
+export default function Edit() {
+  const router = useRouter();
+  return (
+    <WordcraftEditor
+      mobile="auto" // the phone layout below 600px on touch screens
+      mobileOptions={{ onBack: () => router.back() }}
+      height="100dvh"
+      onSave={(file) => fetch('/api/doc', { method: 'PUT', body: file.blob })}
+    />
+  );
+}`,
   },
 };

@@ -6,6 +6,7 @@
     "build": "next build",
     "start": "next start",
     "smoke": "node smoke-test.mjs",
+    "smoke:mobile": "node smoke-mobile.mjs",
     "collab-server": "node collab-server.mjs",
     "smoke:collab": "node smoke-collab.mjs"
   },

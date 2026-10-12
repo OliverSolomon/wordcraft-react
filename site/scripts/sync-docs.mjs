@@ -20,6 +20,7 @@ const PAGES = [
   { slug: 'ai', title: 'AI and AI Studio', group: 'Features', extra: true, sections: ['AI (Extra)'] },
   { slug: 'version-history', title: 'Version history', group: 'Features', extra: true, sections: ['Version history (Extra)'] },
   { slug: 'fonts', title: 'Fonts', group: 'Features', sections: ['Fonts'] },
+  { slug: 'mobile', title: 'Phones and tablets', group: 'Features', extra: true, sections: ['Phones and tablets'] },
   { slug: 'extras', title: 'Extras', group: 'Reference', sections: ['Extras'] },
   { slug: 'divergences', title: 'Divergences from WordCraft', group: 'Reference', file: 'docs/DIVERGENCES.md' },
   { slug: 'word-parity', title: 'Word parity', group: 'Reference', file: 'docs/WORD-PARITY.md' },
@@ -40,6 +41,7 @@ const SUMMARIES = {
   ai: 'A Gemini-style writing bar with skills, letterheads, palettes and your own model.',
   'version-history': 'Versions recorded as you work, to view, name, restore or download.',
   fonts: 'The Google Fonts library in the font box, previewed in each face.',
+  mobile: 'Word for Android’s shape on phones: touch gestures, a bottom command palette, foldables.',
   extras: 'What this package adds beyond Microsoft Word and WordCraft.',
   divergences: 'Every way the package differs from WordCraft, and where each change lives.',
   'word-parity': 'How much of Word the editor covers, tab by tab.',
@@ -52,6 +54,7 @@ const SUMMARIES = {
 
 // In-README anchors that now live on other pages.
 const ANCHORS = {
+  '#phones-and-tablets': '/docs/mobile/',
   '#co-editing': '/docs/co-editing/',
   '#real-time-co-editing': '/docs/co-editing/',
   '#ai-extra': '/docs/ai/',

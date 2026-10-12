@@ -15,6 +15,9 @@
 
 #[cfg(target_arch = "wasm32")]
 mod collab;
+pub mod touch;
+#[cfg(target_arch = "wasm32")]
+mod touch_web;
 #[cfg(target_arch = "wasm32")]
 mod web;
 

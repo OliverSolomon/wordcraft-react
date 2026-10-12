@@ -14,6 +14,7 @@ use wordcraft_engine::Session;
 use wordcraft_ui_egui::{Inbox, Services, UiState, WordApp};
 
 use crate::collab::{CollabState, Peer, parse_color};
+use crate::touch_web::TouchState;
 use crate::{MountOptions, autosave_name, document_fonts, merge_json, mime_for};
 
 const DOC_EXTS: &[&str] = &["docx", "docm", "dotx", "dotm", "doc", "dot", "odt", "rtf", "txt", "md", "html", "htm", "tex", "json"];
@@ -46,6 +47,10 @@ struct Shared {
     on_font_request: RefCell<Option<js_sys::Function>>,
     /// `cb(event)` for host events from the UI (`"ai"`: the AI button was clicked).
     on_host_event: RefCell<Option<js_sys::Function>>,
+    /// Touch gestures on the page and the selection handles.
+    touch: RefCell<TouchState>,
+    /// `cb(info)` when the selection, its place on screen or the contextual tabs change.
+    on_selection: RefCell<Option<js_sys::Function>>,
 }
 
 impl Shared {
@@ -93,6 +98,8 @@ pub async fn mount(
         on_collab_cursor: RefCell::new(None),
         on_font_request: RefCell::new(None),
         on_host_event: RefCell::new(None),
+        touch: RefCell::new(TouchState::default()),
+        on_selection: RefCell::new(None),
     });
 
     let mut web_options = eframe::WebOptions::default();
@@ -221,6 +228,26 @@ impl Shell {
 }
 
 impl Shell {
+    /// Selection handles, and the selection reported to the host when it changed.
+    fn touch_frame(&self, app: &mut WordApp, ctx: &egui::Context) {
+        let Ok(mut touch) = self.shared.touch.try_borrow_mut() else { return };
+        touch.paint(app, ctx);
+        if self.shared.on_selection.borrow().is_none() {
+            return;
+        }
+        let Some(info) = touch.report(app, Some(ctx.content_rect())) else { return };
+        drop(touch);
+        let shared = self.shared.clone();
+        defer(move || {
+            let cb = shared.on_selection.borrow().clone();
+            if let (Some(cb), Ok(v)) = (cb, js_sys::JSON::parse(&info))
+                && let Err(e) = cb.call1(&JsValue::NULL, &v)
+            {
+                log::error!("wordcraft selection handler threw: {e:?}");
+            }
+        });
+    }
+
     /// Events from WordCraft's UI meant for the page, such as the AI button being clicked.
     fn host_events(&self, app: &mut WordApp) {
         if app.host_events.is_empty() {
@@ -327,19 +354,43 @@ impl eframe::App for Shell {
         self.shared.in_logic.set(false);
     }
 
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
-        self.with_app(|app| app.raw_input_hook(raw));
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        let shared = self.shared.clone();
+        self.with_app(|app| {
+            if let Ok(mut touch) = shared.touch.try_borrow_mut() {
+                touch.input(ctx, raw, app);
+            }
+            app.raw_input_hook(raw);
+        });
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let Ok(mut guard) = self.shared.app.try_borrow_mut() else { return };
         let Some(app) = guard.as_mut() else { return };
+        fit_web_layout(app);
         app.ui(ui);
         point_autosave(&self.shared, app);
         self.collab_frame(app, ui);
+        self.touch_frame(app, ui.ctx());
         self.font_requests(app);
         self.host_events(app);
         self.note_changes(app);
+    }
+}
+
+/// Web Layout (and Draft and Outline) as wide as the window, as in Word: on a phone that is Mobile
+/// View, the text reflowed to the screen. Upstream lays them out 800pt wide whatever the window.
+fn fit_web_layout(app: &mut WordApp) {
+    use wordcraft_layout::ViewMode;
+    if app.session.view.mode == ViewMode::Print {
+        return;
+    }
+    let Some(area) = app.canvas.canvas_rect else { return };
+    // The canvas keeps 14 points for its scroll bar and an 18-point gap each side of the page.
+    let scale = app.session.view.zoom.clamp(0.1, 5.0) * wordcraft_ui_egui::canvas::PX_PER_PT;
+    let width = ((area.width() - 14.0 - 36.0) / scale).max(144.0).round();
+    if width.is_finite() && (app.session.view.web_width - width).abs() >= 1.0 {
+        app.session.view.web_width = width;
     }
 }
 
@@ -913,6 +964,41 @@ impl WordcraftHandle {
         *self.shared.on_host_event.borrow_mut() = cb;
     }
 
+    /// Touch gestures on the page (on by default): drag to scroll, tap for the caret, long-press
+    /// to select a word, handles to change the selection, pinch to zoom.
+    #[wasm_bindgen(js_name = setTouch)]
+    pub fn set_touch(&self, on: bool) {
+        if let Ok(mut t) = self.shared.touch.try_borrow_mut() {
+            t.on = on;
+            if !on {
+                t.reset();
+            }
+        }
+        self.shared.repaint();
+    }
+
+    /// `cb(info)` when the selection, where it sits on screen, or the contextual tabs change.
+    /// `info` is `selectionInfo()` as an object.
+    #[wasm_bindgen(js_name = setOnSelection)]
+    pub fn set_on_selection(&self, cb: Option<js_sys::Function>) {
+        *self.shared.on_selection.borrow_mut() = cb;
+        if let Ok(mut t) = self.shared.touch.try_borrow_mut() {
+            // Report the current state to the new listener.
+            t.forget_report();
+        }
+        self.shared.repaint();
+    }
+
+    /// The selection as JSON: `collapsed`, `rect` (the visible part, in CSS pixels from the
+    /// editor's corner), `contextual` tabs, `touch` (made by touch), `selected` (a touch
+    /// selection just finished), `scrolling` and `scrolled`.
+    #[wasm_bindgen(js_name = selectionInfo)]
+    pub fn selection_info(&self) -> Result<String, JsValue> {
+        let shared = self.shared.clone();
+        let screen = self.shared.ctx.borrow().as_ref().map(egui::Context::content_rect);
+        self.with_app(|app| shared.touch.try_borrow().map(|t| t.info(app, screen).to_string()).map_err(|_| "busy".to_string()))
+    }
+
     /// Whether a font family is available to documents now.
     #[wasm_bindgen(js_name = hasFont)]
     pub fn has_font(&self, family: &str) -> bool {
@@ -934,6 +1020,7 @@ impl WordcraftHandle {
         *self.shared.on_collab_cursor.borrow_mut() = None;
         *self.shared.on_font_request.borrow_mut() = None;
         *self.shared.on_host_event.borrow_mut() = None;
+        *self.shared.on_selection.borrow_mut() = None;
         if let Ok(mut c) = self.shared.collab.try_borrow_mut() {
             *c = None;
         }

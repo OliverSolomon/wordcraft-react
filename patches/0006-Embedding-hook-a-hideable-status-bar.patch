@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
+Date: Mon, 12 Oct 2026 08:06:33 +0300
+Subject: [PATCH 6/6] Embedding hook: a hideable status bar
+
+A host that draws its own phone interface can hide the status bar with the hideStatusBar preference, as it hides the title bar and ribbon.
+---
+ crates/ui-egui/src/lib.rs | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
+index 28caf30..d6d78e4 100644
+--- a/crates/ui-egui/src/lib.rs
++++ b/crates/ui-egui/src/lib.rs
+@@ -138,6 +138,8 @@ pub struct UiState {
+     pub hide_title_bar: bool,
+     /// Embedded: hide the ribbon including its tab row (Word's "Auto-hide Ribbon").
+     pub hide_ribbon: bool,
++    /// Embedded: hide the status bar (page, words, zoom), as on a phone.
++    pub hide_status_bar: bool,
+     /// Embedded: ribbon tabs the host doesn't offer (`File`, `Home`, `Insert`, `Draw`, ...).
+     pub hidden_tabs: Vec<String>,
+     /// Fonts picked lately, newest first (Word's "Recently Used Fonts").
+@@ -212,6 +214,7 @@ impl Default for UiState {
+             language: i18n::AUTO.into(),
+             hide_title_bar: false,
+             hide_ribbon: false,
++            hide_status_bar: false,
+             hidden_tabs: Vec::new(),
+             recent_fonts: Vec::new(),
+             editing: wordcraft_engine::Prefs::default(),
+@@ -1289,7 +1292,9 @@ impl WordApp {
+             if !self.ui.hide_ribbon {
+                 ribbon::show(self, ui);
+             }
+-            chrome::status_bar(self, ui);
++            if !self.ui.hide_status_bar {
++                chrome::status_bar(self, ui);
++            }
+             panes::show(self, ui);
+             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
+                 canvas::show(self, ui);
+-- 
+2.43.0
+

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Sun, 11 Oct 2026 13:07:39 +0300
-Subject: [PATCH 5/5] Windows-style inline tools, rulers that follow the view,
+Subject: [PATCH 5/6] Windows-style inline tools, rulers that follow the view,
  web font previews, Version History hooks
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -17,6 +17,7 @@ wordcraft-engine = { path = "upstream/crates/engine" }
 wordcraft-ui-egui = { path = "upstream/crates/ui-egui" }
 wordcraft-doc = { path = "upstream/crates/doc" }
 wordcraft-fonts = { path = "upstream/crates/fonts" }
+wordcraft-layout = { path = "upstream/crates/layout" }
 
 [profile.release]
 opt-level = 3

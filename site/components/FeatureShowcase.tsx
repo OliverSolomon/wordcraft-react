@@ -26,6 +26,15 @@ const LIVE: Record<LiveKind, ComponentType> = {
   fonts: dynamic(() => import('@/app/demos/fonts/FontsDemo').then((m) => m.FontsDemo), { ssr: false, loading }),
   api: dynamic(() => import('@/app/demos/api/ApiDemo').then((m) => m.ApiDemo), { ssr: false, loading }),
   viewer: dynamic(() => import('@/app/demos/viewer/ViewerDemo').then((m) => m.ViewerDemo), { ssr: false, loading }),
+  mobile: dynamic(
+    () =>
+      import('./Editor').then((m) => () => (
+        <div className="phone-frame">
+          <m.Editor sample mobile user={{ name: 'You', color: '#2554c7' }} height="100%" />
+        </div>
+      )),
+    { ssr: false, loading },
+  ),
 };
 
 type Tab = 'preview' | 'live' | 'code';

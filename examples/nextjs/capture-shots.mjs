@@ -15,7 +15,7 @@ const app = (process.argv[2] ?? 'http://localhost:3005').replace(/\/$/, '');
 const site = (process.argv[3] ?? 'http://localhost:3100/wordcraft-react').replace(/\/$/, '');
 
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
-const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1.5, colorScheme: 'dark' });
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, colorScheme: 'dark' });
 const page = await ctx.newPage();
 
 const save = async (name, clip) => {
@@ -36,6 +36,13 @@ const at = async (x, y, opts) => {
   await page.mouse.click(x, y, opts);
 };
 
+// `site` as a third argument retakes only the site's shots.
+const siteOnly = process.argv[4] === 'site';
+const editorReady = async (p) => {
+  await p.waitForSelector('canvas[data-wordcraft]', { timeout: 180_000 });
+  await p.waitForTimeout(9000);
+};
+if (!siteOnly) {
 // The example app, in the editor's dark interface.
 await page.goto(`${app}/`, { waitUntil: 'load' });
 await ready();
@@ -126,6 +133,8 @@ await page.selectOption('select[aria-label="Mode"]', 'viewing');
 await page.waitForTimeout(1200);
 await save('viewer', await editorBox());
 
+}
+
 // From the site: co-editing, the command API and the playground.
 const s = await ctx.newPage();
 await s.goto(`${site}/demos/collaboration/`, { waitUntil: 'load' });
@@ -136,7 +145,7 @@ await s.screenshot({ path: join(OUT, 'collab.jpg'), type: 'jpeg', quality: 82, c
 console.log('shot collab');
 
 await s.goto(`${site}/demos/api/`, { waitUntil: 'load' });
-await ready(s);
+await editorReady(s);
 await s.click('.api-list button:has-text("Insert a 3 × 4 table")');
 await s.click('.api-list button:has-text("Count the commands")');
 await s.waitForTimeout(1000);
@@ -145,7 +154,7 @@ await s.screenshot({ path: join(OUT, 'api.jpg'), type: 'jpeg', quality: 82, clip
 console.log('shot api');
 
 await s.goto(`${site}/playground/`, { waitUntil: 'load' });
-await ready(s);
+await editorReady(s);
 const pg = await s.locator('.demo-frame').boundingBox();
 await s.screenshot({ path: join(OUT, 'playground.jpg'), type: 'jpeg', quality: 82, clip: { x: pg.x, y: pg.y, width: pg.width, height: Math.min(pg.height, 760) } });
 console.log('shot playground');
