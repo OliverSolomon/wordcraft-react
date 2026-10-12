@@ -514,6 +514,9 @@ fn write_document(txn: &mut TransactionMut, roots: &Roots, old: &Document, new: 
                 if o.kind != part.kind {
                     m.insert(txn, "kind", json_str(&to_json(&part.kind)));
                 }
+                if o.body != part.body {
+                    m.insert(txn, "body", json_str(&to_json(&part.body)));
+                }
                 if let Some(arr) = get_array(txn, &m, "blocks") {
                     sync_blocks(txn, &arr, &o.blocks, &part.blocks);
                 }
@@ -566,6 +569,7 @@ fn write_document(txn: &mut TransactionMut, roots: &Roots, old: &Document, new: 
 
 fn write_part(txn: &mut TransactionMut, m: &MapRef, part: &Part) {
     m.insert(txn, "kind", json_str(&to_json(&part.kind)));
+    m.insert(txn, "body", json_str(&to_json(&part.body)));
     let arr = m.insert(txn, "blocks", ArrayPrelim::default());
     for (i, b) in part.blocks.iter().enumerate() {
         insert_block(txn, &arr, i as u32, b);
@@ -636,6 +640,7 @@ fn insert_block(txn: &mut TransactionMut, arr: &ArrayRef, idx: u32, b: &Block) {
             m.insert(txn, "t", "tbl");
             m.insert(txn, "props", json_str(&to_json(&t.props)));
             m.insert(txn, "grid", json_str(&to_json(&t.grid)));
+            m.insert(txn, "controls", json_str(&to_json(&t.controls)));
             let rows = m.insert(txn, "rows", ArrayPrelim::default());
             for (ri, r) in t.rows.iter().enumerate() {
                 insert_row(txn, &rows, ri as u32, r);
@@ -647,6 +652,7 @@ fn insert_block(txn: &mut TransactionMut, arr: &ArrayRef, idx: u32, b: &Block) {
 fn insert_row(txn: &mut TransactionMut, rows: &ArrayRef, idx: u32, r: &Row) {
     let rm = rows.insert(txn, idx, MapPrelim::default());
     rm.insert(txn, "props", json_str(&to_json(&r.props)));
+    rm.insert(txn, "controls", json_str(&to_json(&r.controls)));
     let cells = rm.insert(txn, "cells", ArrayPrelim::default());
     for (ci, c) in r.cells.iter().enumerate() {
         insert_cell(txn, &cells, ci as u32, c);
@@ -656,6 +662,7 @@ fn insert_row(txn: &mut TransactionMut, rows: &ArrayRef, idx: u32, r: &Row) {
 fn insert_cell(txn: &mut TransactionMut, cells: &ArrayRef, idx: u32, c: &Cell) {
     let cm = cells.insert(txn, idx, MapPrelim::default());
     cm.insert(txn, "props", json_str(&to_json(&c.props)));
+    cm.insert(txn, "controls", json_str(&to_json(&c.controls)));
     let blocks = cm.insert(txn, "blocks", ArrayPrelim::default());
     for (bi, b) in c.blocks.iter().enumerate() {
         insert_block(txn, &blocks, bi as u32, b);
@@ -668,6 +675,9 @@ fn update_table(txn: &mut TransactionMut, m: &MapRef, old: &Table, new: &Table) 
     }
     if old.grid != new.grid {
         m.insert(txn, "grid", json_str(&to_json(&new.grid)));
+    }
+    if old.controls != new.controls {
+        m.insert(txn, "controls", json_str(&to_json(&new.controls)));
     }
     let Some(rows) = get_array(txn, m, "rows") else { return };
     let (ol, nl) = (old.rows.len(), new.rows.len());
@@ -687,6 +697,9 @@ fn update_table(txn: &mut TransactionMut, m: &MapRef, old: &Table, new: &Table) 
         if o.props != n.props {
             rm.insert(txn, "props", json_str(&to_json(&n.props)));
         }
+        if o.controls != n.controls {
+            rm.insert(txn, "controls", json_str(&to_json(&n.controls)));
+        }
         let Some(cells) = get_array(txn, &rm, "cells") else { continue };
         let common = o.cells.len().min(n.cells.len());
         for c in 0..common {
@@ -697,6 +710,9 @@ fn update_table(txn: &mut TransactionMut, m: &MapRef, old: &Table, new: &Table) 
             let Some(cm) = cells.get(txn, c as u32).and_then(|v| v.cast::<MapRef>().ok()) else { continue };
             if oc.props != nc.props {
                 cm.insert(txn, "props", json_str(&to_json(&nc.props)));
+            }
+            if oc.controls != nc.controls {
+                cm.insert(txn, "controls", json_str(&to_json(&nc.controls)));
             }
             if let Some(blocks) = get_array(txn, &cm, "blocks") {
                 sync_blocks(txn, &blocks, &oc.blocks, &nc.blocks);
@@ -934,7 +950,8 @@ fn read_document<T: ReadTxn>(roots: &Roots, txn: &T) -> Result<Document, CollabE
         let (Ok(id), Ok(m)) = (k.parse::<u32>(), v.cast::<MapRef>()) else { continue };
         let kind = get_json(txn, &m, "kind").and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
         let blocks = get_array(txn, &m, "blocks").map(|a| read_blocks(txn, &a)).unwrap_or_default();
-        doc.parts.insert(id, Part { kind, blocks });
+        let body = get_json(txn, &m, "body").and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+        doc.parts.insert(id, Part { kind, blocks, body });
     }
     doc.comments = BTreeMap::new();
     for (k, v) in roots.comments.iter(txn) {
@@ -973,6 +990,7 @@ fn read_block<T: ReadTxn>(txn: &T, m: &MapRef) -> Block {
                     .filter_map(|r| r.cast::<MapRef>().ok())
                     .map(|rm| Row {
                         props: get_json(txn, &rm, "props").and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
+                        controls: get_json(txn, &rm, "controls").and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
                         cells: get_array(txn, &rm, "cells")
                             .map(|cells| {
                                 cells
@@ -985,6 +1003,7 @@ fn read_block<T: ReadTxn>(txn: &T, m: &MapRef) -> Block {
                                         }
                                         Cell {
                                             props: get_json(txn, &cm, "props").and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
+                                            controls: get_json(txn, &cm, "controls").and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
                                             blocks,
                                         }
                                     })
@@ -995,7 +1014,8 @@ fn read_block<T: ReadTxn>(txn: &T, m: &MapRef) -> Block {
                     .collect()
             })
             .unwrap_or_default();
-        return Block::Table(Table { props, grid, rows });
+        let controls = get_json(txn, m, "controls").and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+        return Block::Table(Table { props, grid, rows, controls });
     }
     Block::Para(read_para(txn, m))
 }

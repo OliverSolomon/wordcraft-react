@@ -4563,6 +4563,7 @@ dependencies = [
  "log",
  "skrifa 0.47.0",
  "unicode-bidi",
+ "unicode-script",
 ]
 
 [[package]]
@@ -4588,7 +4589,9 @@ dependencies = [
 name = "wordcraft-layout"
 version = "0.5.0"
 dependencies = [
+ "image",
  "js-sys",
+ "kurbo",
  "log",
  "serde",
  "serde_json",
