@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { ArrowRight, ArrowsInLineVertical, BookOpenText, CheckCircle, Eye, SlidersHorizontal } from '@phosphor-icons/react/dist/ssr';
+import { ArrowRight, BookOpenText, CheckCircle, Eye, SlidersHorizontal } from '@phosphor-icons/react/dist/ssr';
 
 import { CopyInstall } from '@/components/CopyInstall';
 import { SHOTS } from '@/lib/features';
@@ -116,14 +116,14 @@ export default function Overview() {
         <Tile size="half" href="/docs/editor-api/" title="Command API" shot={SHOTS.api}>
           Every ribbon action is a command you can run from code. Export to .docx, PDF, HTML or Markdown.
         </Tile>
+        <Tile size="third" href="/docs/mobile/" title="Phones and tablets" extra shot={SHOTS.mobile}>
+          Word for Android’s shape: touch gestures and one palette at the bottom.
+        </Tile>
         <Tile size="third" href="/docs/props/" title="Host controls" icon={<SlidersHorizontal size={20} />}>
-          Choose the tabs, hide the title bar or ribbon, set the mode and turn commands off.
+          Choose the tabs, collapse or hide the ribbon and title bar, set the mode and turn commands off.
         </Tile>
         <Tile size="third" href="/demos/viewer/" title="Document viewer" icon={<Eye size={20} />}>
           Viewing mode with the chrome hidden: faithful pages, read only.
-        </Tile>
-        <Tile size="third" href="/docs/props/" title="Ribbon collapse" icon={<ArrowsInLineVertical size={20} />}>
-          Word’s ^ button: tabs and ruler stay, a tab opens the ribbon over the page.
         </Tile>
       </div>
 

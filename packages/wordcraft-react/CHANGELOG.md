@@ -4,6 +4,13 @@ Every published version of `@gamine/wordcraft-react`, newest first. Versions fol
 
 Features marked ✦ are Extras: additions of this package that are not part of Microsoft Word or WordCraft. [docs/DIVERGENCES.md](docs/DIVERGENCES.md) lists every way the package differs from WordCraft.
 
+## 0.3.3 (2026-10-12)
+
+- **Phones and tablets** ✦: on a touch screen narrower than 600px the editor takes the shape of Word for Android (`mobile`, `'auto'` by default). A slim title bar (Undo, Redo, Mobile View, the palette, More) sits over the page, with a command palette at the bottom: a quick bar above the keyboard, and Home, Insert, Draw, Layout, Review and View tabs with Table, Picture and Shape when the selection calls for them. Fonts, colours, styles, margins, sizes, tables, shapes, links and comments open as pages inside the palette. It switches live as a phone turns or a foldable opens.
+- **Touch on the page** ✦: a finger drags and flings the page, a tap places the caret, a long press selects a word, handles adjust the selection and two fingers zoom. A floating toolbar over a touch selection cuts, copies and pastes through the phone's clipboard.
+- **On the phone** ✦: Find and Replace in place of the title bar, sharing the .docx through the phone's share sheet, Download as PDF, Word Count, photos from the camera, and dictation where the browser offers speech recognition. The bars slide away as you read down, and the palette rides above the keyboard.
+- **API:** `editor.onSelection()`, `editor.selectionInfo()` and `editor.setTouch()`, and the `hideStatusBar` and `miniToolbar` preferences (patch 0006 hides the status bar).
+
 ## 0.3.2 (2026-10-12)
 
 - **Upstream:** synced to WordCraft `62b58d1`, 95 commits since `1d4f741`. Word coverage rises from 402 of 434 to 482 of 497 catalogued features. The main additions:

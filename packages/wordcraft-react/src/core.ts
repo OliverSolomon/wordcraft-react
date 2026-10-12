@@ -36,6 +36,10 @@ export interface WordcraftPrefs {
   hideRibbon: boolean;
   /** Hide the title bar: AutoSave, Quick Access Toolbar, title, search and the account avatar. */
   hideTitleBar: boolean;
+  /** Hide the status bar (page, word count, zoom). The mobile layout hides it. */
+  hideStatusBar: boolean;
+  /** Show the mini toolbar over a selection (on by default). The mobile layout uses its own. */
+  miniToolbar: boolean;
   /** `auto` or a language code (`en`, `ja`, `pt-br`, `uk`, `zh-hant`, ...). */
   language: string;
   /** Author name used for comments and tracked changes. */
@@ -148,6 +152,38 @@ export function chromePrefs(titleBar: boolean | undefined, ribbon: RibbonDisplay
   }
   return out;
 }
+
+/** A rectangle in CSS pixels, measured from the editor's top-left corner. */
+export interface EditorRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Where the selection is and what it holds, for touch layouts (see `onSelection`). */
+export interface SelectionInfo {
+  /** A caret, not a selection. */
+  collapsed: boolean;
+  /** The visible part of the selection (or the caret), or `null` when it is off screen. */
+  rect: EditorRect | null;
+  visible: boolean;
+  /** The page area (the editor minus its title bar, ribbon and status bar). */
+  page: EditorRect | null;
+  /** Contextual tabs for the selection: `Table Design`, `Table Layout`, `Picture Format`, `Shape Format`, `SmartArt Design`, `Chart Design`, `Equation`, `Outlining`. */
+  contextual: string[];
+  /** The selection was made by touch (its handles show). */
+  touch: boolean;
+  /** A touch selection gesture just finished: a phone shows its floating toolbar now. */
+  selected: boolean;
+  /** The page is moving under a finger or a fling. */
+  scrolling: boolean;
+  /** Total distance the page has scrolled by touch, in CSS pixels (positive = towards the top). */
+  scrolled: number;
+}
+
+/** The editor reports the selection in egui points, with the editor's size in points beside it. */
+type RawSelectionInfo = SelectionInfo & { screen?: EditorRect | null };
 
 /** A command from WordCraft's registry (the same ids the ribbon, shortcuts and MCP use). */
 export interface CommandInfo {
@@ -283,6 +319,15 @@ export interface WordcraftEditor {
   isAutoSaving(): boolean;
   /** Turn AutoSave on or off (needs `onSave`); returns whether it is now on. */
   setAutoSave(on: boolean): boolean;
+  /**
+   * Touch gestures on the page (on by default): a finger drags the page, a tap places the caret,
+   * a long press selects a word, handles change the selection and two fingers zoom.
+   */
+  setTouch(on: boolean): void;
+  /** Where the selection is now (for a floating toolbar). */
+  selectionInfo(): SelectionInfo | null;
+  /** Listen for selection changes (also as it moves on screen). Returns a function that stops listening. */
+  onSelection(cb: (info: SelectionInfo) => void): () => void;
   /** Run any WordCraft command by id, e.g. `execute('format.bold')`, `execute('text.insert', { text: 'Hi' })`. */
   execute<T = unknown>(command: string, params?: Record<string, unknown>): T;
   /** Every command in WordCraft's registry. */
@@ -348,6 +393,9 @@ interface RawHandle {
   setAiButton?(on: boolean): void;
   restoreContent?(name: string, bytes: Uint8Array): void;
   setOnHostEvent?(cb: ((event: string) => void) | null): void;
+  setTouch?(on: boolean): void;
+  setOnSelection?(cb: ((info: RawSelectionInfo) => void) | null): void;
+  selectionInfo?(): string;
   collabStart(clientId: number, state: Uint8Array | null): boolean;
   collabApply(update: Uint8Array): void;
   collabState(): Uint8Array;
@@ -481,6 +529,15 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     canvas.remove();
     throw e;
   }
+
+  // A finger reaches the editor as touch events, which its touch layer turns into gestures. The
+  // browser also sends pointer events for it, which egui would take for a second, mouse click (a
+  // double-click that selects a word); those stop here, before the canvas. Mouse and pen pass.
+  const touchPointer = (e: PointerEvent) => {
+    if (e.pointerType === 'touch' && e.target === canvas) e.stopPropagation();
+  };
+  container.addEventListener('pointerdown', touchPointer, { capture: true });
+  container.addEventListener('pointerup', touchPointer, { capture: true });
 
   let destroyed = false;
   const alive = () => {
@@ -645,9 +702,40 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     },
   };
 
+  // Selection listeners share the one callback the editor offers. Points become CSS pixels by the
+  // canvas's own measure, which holds at any device pixel ratio and interface size.
+  const toCss = (info: RawSelectionInfo): SelectionInfo => {
+    const { screen, ...rest } = info;
+    const k = screen && screen.width > 0 && canvas.clientWidth > 0 ? canvas.clientWidth / screen.width : 1;
+    const r = (x: EditorRect | null): EditorRect | null => (x ? { x: x.x * k, y: x.y * k, width: x.width * k, height: x.height * k } : null);
+    return { ...rest, rect: r(rest.rect), page: r(rest.page), scrolled: rest.scrolled * k };
+  };
+  const selectionListeners = new Set<(info: SelectionInfo) => void>();
+  const syncSelection = () => {
+    raw.setOnSelection?.(selectionListeners.size ? (info) => selectionListeners.forEach((cb) => cb(toCss(info))) : null);
+  };
+
   const editor: WordcraftEditor = {
     canvas,
     collab,
+    setTouch(on) {
+      alive();
+      raw.setTouch?.(on);
+    },
+    selectionInfo() {
+      alive();
+      const out = raw.selectionInfo?.();
+      return out ? toCss(JSON.parse(out) as RawSelectionInfo) : null;
+    },
+    onSelection(cb) {
+      alive();
+      selectionListeners.add(cb);
+      syncSelection();
+      return () => {
+        selectionListeners.delete(cb);
+        if (!destroyed) syncSelection();
+      };
+    },
     async load(source) {
       alive();
       const name = source.name;
@@ -814,6 +902,8 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      container.removeEventListener('pointerdown', touchPointer, { capture: true });
+      container.removeEventListener('pointerup', touchPointer, { capture: true });
       try {
         raw.destroy();
         raw.free?.();

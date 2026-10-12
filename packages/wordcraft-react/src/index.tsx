@@ -7,7 +7,7 @@
  * renders a sized container on the server and mounts WordCraft in an effect on the client, so it
  * needs no `dynamic(..., { ssr: false })` wrapper.
  */
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 
 import { chromePrefs, createWordcraft, hiddenTabsFor } from './core.js';
@@ -16,6 +16,8 @@ import { VersionHistory } from './history.js';
 import type { VersionHistoryHandle } from './history.js';
 import type { VersionHistoryOptions } from './versions.js';
 import type { AiOptions } from './ai.js';
+import { MobileShell } from './mobile.js';
+import type { MobileOptions } from './mobile.js';
 import type { ChangeInfo, Collaboration, DocumentSource, EditorMode, FontSource, RibbonDisplay, RibbonTab, SavedFile, WordcraftEditor as Editor, WordcraftOptions, WordcraftPrefs, WordcraftUser } from './core.js';
 
 export * from './core.js';
@@ -24,6 +26,8 @@ export * from './ai-studio.js';
 export { VersionHistory } from './history.js';
 export type { VersionHistoryHandle, VersionHistoryProps } from './history.js';
 export type { AiBarProps, AiOptions, AiProviderConfig, AiProviderId } from './ai.js';
+export { MOBILE_PALETTE, MobileShell } from './mobile.js';
+export type { FormatState, MobileOptions, MobileShellProps, MobileTabId, PaletteItem, PaletteState, PaletteTab, ViewState } from './mobile.js';
 
 export interface WordcraftEditorProps {
   /** Document to open when the editor mounts. Changing it later loads the new document. */
@@ -90,6 +94,15 @@ export interface WordcraftEditorProps {
   /** Open or close the AI bar (controlled). Leave unset to let the star button toggle it. */
   aiOpen?: boolean;
   onAiOpenChange?: (open: boolean) => void;
+  /**
+   * The phone layout, shaped like Word on Android: a title bar, the page, and a command palette at
+   * the bottom, with touch gestures on the page. `'auto'` (default) uses it on touch screens
+   * narrower than 600px and switches live (a foldable opening, a phone turning); `true` always;
+   * `false` never.
+   */
+  mobile?: boolean | 'auto';
+  /** Options for the phone layout: Mobile View, the back arrow, sharing, camera, dictation. */
+  mobileOptions?: MobileOptions;
   /** Ask before the tab closes with unsaved changes. Read once, on mount. */
   guardUnload?: boolean;
   /** Where to load the `.wasm` from (CDN or `public/`). Read once, on mount. */
@@ -149,6 +162,32 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
   const latest = useRef(props);
   latest.current = props;
 
+  // The phone layout: on narrow touch screens (or when asked), measured on the container.
+  const [isMobile, setIsMobile] = useState(false);
+  const mobileSeen = useRef(false);
+  const mobileProp = props.mobile ?? 'auto';
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    if (mobileProp !== 'auto') {
+      setIsMobile(mobileProp);
+      return;
+    }
+    const coarse = typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)') : null;
+    const check = () => setIsMobile(el.getBoundingClientRect().width < MOBILE_BREAKPOINT && !!coarse?.matches);
+    check();
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(check) : null;
+    ro?.observe(el);
+    coarse?.addEventListener?.('change', check);
+    return () => {
+      ro?.disconnect();
+      coarse?.removeEventListener?.('change', check);
+    };
+  }, [mobileProp]);
+  if (isMobile) mobileSeen.current = true;
+  const mobileRef = useRef(isMobile);
+  mobileRef.current = isMobile;
+
   useImperativeHandle(ref, () => editor as Editor, [editor]);
 
   // Mount once per container. StrictMode mounts, unmounts and mounts again; the `cancelled` flag
@@ -170,7 +209,7 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
       mode: p.mode,
       disabledCommands: p.disabledCommands,
       fonts: p.fonts,
-      prefs: mergedPrefs(p),
+      prefs: mergedPrefs(p, isMobileAtMount(el, p.mobile), false),
       aiButton: !!(p.ai && p.ai !== true && p.ai.ribbonButton),
       versionHistory: !!p.versionHistory,
       onChange: (info) => instance && latest.current.onChange?.(info, instance),
@@ -269,8 +308,22 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
     editor.setAutoSave(props.autoSave);
   }, [editor, props.autoSave]);
 
+  // The page sits between the phone layout's title bar and palette.
+  const setInsets = useCallback(
+    (top: number, bottom: number) => {
+      if (!editor || editor.destroyed) return;
+      Object.assign(editor.canvas.style, { top: `${top}px`, bottom: `${bottom}px`, height: 'auto' });
+    },
+    [editor],
+  );
+  useEffect(() => {
+    if (!editor || editor.destroyed || isMobile) return;
+    Object.assign(editor.canvas.style, { top: '0', bottom: '0', height: '100%' });
+    editor.setTouch(true);
+  }, [editor, isMobile]);
+
   // Live preference changes.
-  const prefsKey = JSON.stringify(mergedPrefs(props));
+  const prefsKey = JSON.stringify(mergedPrefs(props, isMobile, mobileSeen.current));
   useEffect(() => {
     if (!editor || editor.destroyed) return;
     editor.setPrefs(JSON.parse(prefsKey) as Partial<WordcraftPrefs>);
@@ -304,13 +357,26 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
           wasmUrl={props.wasmUrl}
         />
       )}
+      {editor && isMobile && !versionsOpen && (
+        <MobileShell
+          editor={editor}
+          options={props.mobileOptions ?? {}}
+          dark={props.dark ?? props.prefs?.dark}
+          hiddenTabs={hiddenTabsFor(props.tabs, props.hiddenTabs)}
+          disabledCommands={props.disabledCommands ?? []}
+          onVersions={versionOptions ? () => setVersionsOpen(true) : undefined}
+          onAi={ai ? () => setAiOpen(true) : undefined}
+          onInsets={setInsets}
+        />
+      )}
       {editor && ai && !versionsOpen && (
         <AiBar
           editor={editor}
           options={ai}
           open={aiOpen}
           onOpenChange={setAiOpen}
-          launcher={ai.launcher !== 'none'}
+          launcher={ai.launcher !== 'none' && !isMobile}
+          bottom={isMobile ? 64 : undefined}
           dark={props.dark ?? props.prefs?.dark}
         />
       )}
@@ -319,11 +385,26 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
   );
 });
 
-function mergedPrefs(p: WordcraftEditorProps): Partial<WordcraftPrefs> {
+/** Below this container width (CSS pixels) a touch screen gets the phone layout, as Word does at 600dp. */
+export const MOBILE_BREAKPOINT = 600;
+
+function isMobileAtMount(el: HTMLElement, mobile: WordcraftEditorProps['mobile']): boolean {
+  if (mobile === true || mobile === false) return mobile;
+  const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+  return coarse && el.getBoundingClientRect().width < MOBILE_BREAKPOINT;
+}
+
+/**
+ * The preferences for the props. The phone layout hides WordCraft's own title bar, ribbon, status
+ * bar and mini toolbar (it draws its own); leaving it (`restore`) brings back what the props ask for.
+ */
+function mergedPrefs(p: WordcraftEditorProps, mobile = false, restore = false): Partial<WordcraftPrefs> {
   const out: Partial<WordcraftPrefs> = { ...(p.prefs ?? {}) };
   if (p.dark !== undefined) out.dark = p.dark;
   const tabs = p.tabs || p.hiddenTabs ? { hiddenTabs: hiddenTabsFor(p.tabs, p.hiddenTabs) } : {};
-  return { ...out, ...chromePrefs(p.titleBar, p.ribbon), ...tabs };
+  if (mobile) return { ...out, ...tabs, hideTitleBar: true, hideRibbon: true, ribbonCollapsed: false, hideStatusBar: true, miniToolbar: false };
+  const desktop = restore ? { hideTitleBar: false, hideRibbon: false, hideStatusBar: false, miniToolbar: p.prefs?.miniToolbar ?? true } : {};
+  return { ...out, ...desktop, ...chromePrefs(p.titleBar, p.ribbon), ...tabs };
 }
 
 function userOf(p: WordcraftEditorProps): WordcraftUser | undefined {

@@ -674,6 +674,21 @@ kbd {
   border: 1px solid var(--line);
   background: var(--frame);
 }
+/* The phone layout's live example: a phone-sized frame, so the editor picks its phone shape. */
+.phone-frame {
+  position: relative;
+  width: min(390px, 100%);
+  height: min(780px, 78vh);
+  margin: 20px auto;
+  border: 9px solid #0d0d10;
+  border-radius: 38px;
+  overflow: hidden;
+  background: #0d0d10;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 18px 40px rgba(0, 0, 0, 0.35);
+}
+.phone-frame > div {
+  border-radius: 29px;
+}
 .showcase-start {
   height: min(62vh, 560px);
   display: grid;

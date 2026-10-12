@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@gamine/wordcraft-react": "^0.3.2",
+    "@gamine/wordcraft-react": "^0.3.3",
     "@phosphor-icons/react": "^2.1.10",
     "geist": "^1.7.2",
     "marked": "^14.1.4",

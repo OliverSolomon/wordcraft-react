@@ -66,6 +66,18 @@ Rows marked ✦ are **Extras**: features that are not part of Microsoft Word or 
 | AI providers ✦ | Not available | Your endpoint, or people's own OpenRouter, OpenAI, Anthropic, Gemini or OpenAI-compatible key | Package |
 | AI ribbon button | Not available | Optional sparkle beside Comments (`ai.ribbonButton`) | Patch 0004 |
 
+## Phones and tablets
+
+| Area | WordCraft | This package | Where |
+|---|---|---|---|
+| Phone layout ✦ | The desktop interface at any size | Below 600px on a touch screen, Word for Android's shape: title bar, page, bottom command palette with tab switcher, drill-in pages and contextual Table, Picture and Shape tabs; switches live on foldables (`mobile`) | Package |
+| Status bar | Always shown | Can be hidden (`prefs.hideStatusBar`); the phone layout hides it | Patch 0006 |
+| Touch on the page ✦ | A finger acts as a mouse, so a drag selects text | A drag scrolls and flings, a tap places the caret, a long press selects a word, handles adjust the selection, two fingers zoom | Package |
+| Selection on screen ✦ | Not reported | `editor.onSelection()` and `selectionInfo()` give its place in CSS pixels and the contextual tabs, for floating toolbars | Package |
+| Floating toolbar on phones ✦ | The mini toolbar | Cut, Copy, Paste (through the system clipboard), Comment and Format over a touch selection | Package |
+| Dictation ✦ | Not available (Word's Dictate is a parity gap) | A microphone button types what you say, where the browser offers speech recognition | Package |
+| Camera ✦ | Not available | Insert › Camera puts a photo from the phone's camera into the document | Package |
+
 ## Not included
 
 These parts of WordCraft are not in the package, because they need a desktop or a server:

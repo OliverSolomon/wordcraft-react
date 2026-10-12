@@ -56,6 +56,8 @@ A complete example app lives in [`examples/nextjs`](examples/nextjs). The docume
 | `ai` ✦ Extra | `AiOptions` or `true` | A sparkle at the bottom centre opens a Gemini-style AI bar with AI Studio (skills with the Humaniser on by default, letterheads, palettes, model). Works with your endpoint, a provider key, or people's own OpenRouter/OpenAI/Anthropic/Gemini key. See [AI](#ai-extra). |
 | `versionHistory` ✦ Extra | `boolean` or `{ store?, documentId?, interval?, max? }` | Version history like Google Docs: versions recorded as people work, in a panel to view, restore, name, download or delete. Opens from the title bar, File › Info and Ctrl+Alt+Shift+H. See [Version history](#version-history-extra). |
 | `versionsOpen`, `onVersionsOpenChange` | | Open or close the version history panel yourself. |
+| `mobile` ✦ Extra | `'auto' \| boolean` | The phone layout, shaped like Word on Android. `'auto'` (default) uses it on touch screens narrower than 600px and switches live, so a foldable gets the phone layout folded and the ribbon unfolded. See [Phones and tablets](#phones-and-tablets). |
+| `mobileOptions` | `MobileOptions` | `{ mobileView?, title?, onBack?, onShare?, camera?, dictation?, shyChrome? }` for the phone layout. |
 | `collaboration` | | Real-time co-editing, e.g. `yjsCollaboration({ doc, provider })`. See [Co-editing](#co-editing). |
 | `dark`, `prefs` | | UI preferences, applied live: ribbon `tab`, `dark`, `darkPage`, `language`, `showDiscord`. |
 | `renderer` | `'auto' \| 'webgl'` | Uses WebGPU and falls back to WebGL2. Pass `webgl` to force WebGL2. |
@@ -90,6 +92,9 @@ editor.setTabs(['File', 'Home', 'Insert', 'Review']);
 editor.setDisabledCommands(['mailings.*', 'file.open']);
 editor.addFont(ttfBytes); editor.hasFont('Lato');
 editor.restoreContent(versionBytes);   // replace the content with another version, one undoable step
+editor.selectionInfo();           // { collapsed, rect, contextual, touch, selected, scrolling, ... } in CSS pixels
+editor.onSelection((info) => {}); // as the selection changes or moves; returns a function that stops listening
+editor.setTouch(false);           // turn the page's touch gestures off (on by default)
 editor.destroy();
 ```
 
@@ -146,6 +151,22 @@ import { googleFonts } from '@gamine/wordcraft-react';
 <WordcraftEditor fonts={false} />                                                    // built-in fonts only
 ```
 
+## Phones and tablets
+
+On a phone the editor takes the shape of Word for Android: a slim title bar, the page, and one command palette at the bottom. WordCraft's own title bar, ribbon, status bar and mini toolbar step aside; every button in the palette runs one of WordCraft's commands, so editing works exactly as on the desktop.
+
+```tsx
+<WordcraftEditor mobile="auto" mobileOptions={{ onBack: () => router.back() }} height="100dvh" />
+```
+
+- **The page.** A finger drags the page and flings it, a tap places the caret, a long press selects a word, two handles adjust the selection, and two fingers zoom. The page opens in Mobile View, which reflows the text to the screen; the title bar switches between Mobile View and Print Layout.
+- **The palette.** A quick bar (Bold, Italic, Underline, Bullets, Numbering, New Comment) sits above the keyboard. The ^ opens the full palette with Home, Insert, Draw, Layout, Review and View, and Table, Picture and Shape appear when the selection calls for them. Fonts, colours, styles, margins, table sizes and the like open as pages inside the palette.
+- **Around the page.** A floating toolbar over a selection (Cut, Copy, Paste, Comment, Format), Find and Replace in place of the title bar, a More menu (Save, Share the .docx, Download as PDF, Print, Word Count, the mode switch, Version History and AI when they're on), photos from the camera, and dictation where the browser offers speech recognition. The bars slide away as you read down and come back as you scroll up, and the palette rides above the soft keyboard.
+- **Foldables and tablets.** The layout follows the container width live, so a phone turning or a foldable opening switches between the palette and the ribbon. Tablets of 600px and wider keep the ribbon and still get the touch gestures.
+- **Your rules apply.** `tabs`, `hiddenTabs` and `disabledCommands` thin the palette as they thin the ribbon. `MOBILE_PALETTE` exports the palette's contents.
+
+`mobile={false}` keeps the desktop layout everywhere; touch gestures on the page stay on unless you call `editor.setTouch(false)`. For your own phone chrome, `editor.onSelection()` reports where the selection sits on screen and which contextual tabs apply.
+
 ## Extras
 
 Everything in this package matches Word and WordCraft, except features marked **✦ Extra**. Extras are additions of this package and are not part of Microsoft Word or WordCraft. In the editor they carry an *Extra* tag. They are:
@@ -154,6 +175,7 @@ Everything in this package matches Word and WordCraft, except features marked **
 - ✦ **Real-time co-editing** with per-person undo and live cursors ([Co-editing](#co-editing)). Word has this; WordCraft does not yet.
 - ✦ **Fonts on demand** from the Google Fonts library ([Fonts](#fonts)).
 - ✦ **Version history** in the style of Google Docs ([Version history](#version-history-extra)). Word has version history for files in OneDrive; WordCraft has none.
+- ✦ **The phone layout and touch gestures** ([Phones and tablets](#phones-and-tablets)), with dictation and camera photos. Word has these in its phone app; WordCraft is desktop and browser only.
 
 The full list of differences from WordCraft, Extras or not, is in [docs/DIVERGENCES.md](docs/DIVERGENCES.md).
 
@@ -248,7 +270,7 @@ The `/core` entry point has no React dependency, and importing it on the server 
 - **Rendering.** WordCraft draws onto a `<canvas>` with its own UI toolkit (egui), which is why it can match Word's interface pixel for pixel. The flip side is that host CSS can't style what's inside the editor. Use `prefs` (dark mode, language, ribbon) and commands instead.
 - **Keyboard.** As with any embedded app, shortcuts go to the editor once it has focus.
 - **Persistence.** The editor keeps the document out of browser storage. Your app owns it, and both AutoSave and Save go through `onSave`; you can also call `export()` whenever you like. The browser keeps only small conveniences (recently used fonts, AI Studio settings, a key someone added) and, with the default store, version history.
-- **Patches on upstream.** The package applies five small patches to WordCraft, listed in [`patches/`](patches). They cover AutoSave on the web, hiding the title bar and ribbon, the co-editing hooks, host controls (tabs, modes, turned-off commands, fonts), the AI button with Word's ribbon collapse, and Windows-style inline tools, rulers, font previews and Version History's entry points. They're written so they can be offered upstream. [docs/DIVERGENCES.md](docs/DIVERGENCES.md) lists every resulting difference from WordCraft.
+- **Patches on upstream.** The package applies six small patches to WordCraft, listed in [`patches/`](patches). They cover AutoSave on the web, hiding the title bar and ribbon, the co-editing hooks, host controls (tabs, modes, turned-off commands, fonts), the AI button with Word's ribbon collapse, Windows-style inline tools, rulers, font previews and Version History's entry points, and hiding the status bar for the phone layout. The touch gestures live in this package's own code, not in a patch. They're written so they can be offered upstream. [docs/DIVERGENCES.md](docs/DIVERGENCES.md) lists every resulting difference from WordCraft.
 - **How close to Word.** See [docs/WORD-PARITY.md](docs/WORD-PARITY.md).
 - **Versions.** Each release bumps the patch number until a version is declared stable ([docs/VERSIONING.md](docs/VERSIONING.md)); [CHANGELOG.md](CHANGELOG.md) says what each one changed.
 
