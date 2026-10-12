@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { ArrowRight } from '@phosphor-icons/react/dist/ssr';
 
 import { docIndex } from '@/lib/docs';
 
@@ -8,29 +9,32 @@ export default function DocsHome() {
   const index = docIndex();
   const groups = [...new Set(index.map((d) => d.group))];
   return (
-    <div className="wrap" style={{ padding: '48px 20px 80px' }}>
-      <span className="eyebrow">Documentation</span>
-      <h1 style={{ fontSize: 40, letterSpacing: '-0.03em', margin: '14px 0 8px' }}>Everything in the package</h1>
-      <p style={{ color: 'var(--ink-2)', maxWidth: 680 }}>
-        These pages are generated from the repository&apos;s README and docs on every release, so they always match the published version.
-      </p>
+    <>
+      <header className="page-head">
+        <h1>Documentation</h1>
+        <p>Generated from the repository on every release, so it always matches the version on npm.</p>
+      </header>
       {groups.map((g) => (
-        <section key={g} style={{ marginTop: 32 }}>
-          <h2 style={{ fontSize: 14, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--muted)' }}>{g}</h2>
-          <div className="grid">
+        <section key={g}>
+          <h2 className="section-title" style={{ marginTop: 34 }}>
+            {g}
+          </h2>
+          <div className="next-grid" style={{ marginTop: 14 }}>
             {index
               .filter((d) => d.group === g)
               .map((d) => (
-                <Link key={d.slug} className="card" href={`/docs/${d.slug}/`}>
-                  <h3>
-                    {d.title} {d.extra && <span className="extra">Extra</span>}
-                  </h3>
-                  <span className="go">Read →</span>
+                <Link key={d.slug} className="next-card" href={`/docs/${d.slug}/`}>
+                  <span className="dir">
+                    {d.title}
+                    {d.extra && <span className="tag">Extra</span>}
+                    <ArrowRight size={16} style={{ marginLeft: 'auto' }} />
+                  </span>
+                  <p>{d.description}</p>
                 </Link>
               ))}
           </div>
         </section>
       ))}
-    </div>
+    </>
   );
 }

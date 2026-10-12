@@ -28,7 +28,7 @@ function Person({ person, first, start, onReady }: { person: { name: string; col
   }, [start]);
 
   return (
-    <div className="panel">
+    <div className="demo-frame">
       <div className="controls">
         <strong style={{ color: person.color }}>● {person.name}</strong>
       </div>

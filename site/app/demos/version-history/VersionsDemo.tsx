@@ -7,7 +7,7 @@ import { Editor } from '@/components/Editor';
 export function VersionsDemo() {
   const [open, setOpen] = useState(false);
   return (
-    <div className="panel">
+    <div className="demo-frame">
       <div className="controls">
         <button type="button" className="btn" onClick={() => setOpen(!open)}>
           {open ? 'Close version history' : 'Open version history'}

@@ -30,6 +30,26 @@ const PAGES = [
   { slug: 'license', title: 'License and credits', group: 'Project', sections: ['License and credits'] },
 ];
 
+// One line per page for cards, search and the page header.
+const SUMMARIES = {
+  'getting-started': 'Install the package and put a Word-grade editor in a React or Next.js page.',
+  props: 'Every prop of <WordcraftEditor />, from documents and saving to tabs, modes and Extras.',
+  'editor-api': 'Load, export and script the editor through its ref, with the same commands as the ribbon.',
+  'without-react': 'Mount the editor in any element with the framework-free core.',
+  'co-editing': 'Several people in one document at once, with live cursors and per-person undo.',
+  ai: 'A Gemini-style writing bar with skills, letterheads, palettes and your own model.',
+  'version-history': 'Versions recorded as you work, to view, name, restore or download.',
+  fonts: 'The Google Fonts library in the font box, previewed in each face.',
+  extras: 'What this package adds beyond Microsoft Word and WordCraft.',
+  divergences: 'Every way the package differs from WordCraft, and where each change lives.',
+  'word-parity': 'How much of Word the editor covers, tab by tab.',
+  'things-to-know': 'Size, rendering, keyboard focus, persistence and the upstream patches.',
+  versioning: 'How releases are numbered, and how they reach npm.',
+  changelog: 'What changed in each published version.',
+  contributing: 'Repository layout, building from source and the upstream sync.',
+  license: 'Licences and credits.',
+};
+
 // In-README anchors that now live on other pages.
 const ANCHORS = {
   '#co-editing': '/docs/co-editing/',
@@ -76,6 +96,32 @@ function splitReadme(md) {
   return sections;
 }
 
+// Plain text of a page's first paragraph, for cards and search.
+function lead(md) {
+  const para = md
+    .split(/\n{2,}/)
+    .map((b) => b.trim())
+    .find((b) => b && !/^(#|```|\||- |\d+\. |<)/.test(b));
+  const text = (para ?? '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[`*_]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > 170 ? `${text.slice(0, 167).replace(/\s+\S*$/, '')}…` : text;
+}
+
+// Section headings, for search.
+function headings(md) {
+  const out = [];
+  let inCode = false;
+  for (const line of md.split('\n')) {
+    if (line.startsWith('```')) inCode = !inCode;
+    const m = !inCode && /^(##|###) (.+)$/.exec(line);
+    if (m) out.push(m[2].replace(/[`*]/g, '').trim());
+  }
+  return out;
+}
+
 fs.mkdirSync(out, { recursive: true });
 const readme = splitReadme(fs.readFileSync(path.join(root, 'README.md'), 'utf8'));
 const index = [];
@@ -97,7 +143,7 @@ for (const page of PAGES) {
   }
   if (/\u2014/.test(md)) throw new Error(`${page.slug}: em dash found; the docs avoid them`);
   fs.writeFileSync(path.join(out, `${page.slug}.md`), md + '\n');
-  index.push({ slug: page.slug, title: page.title, group: page.group, extra: !!page.extra });
+  index.push({ slug: page.slug, title: page.title, group: page.group, extra: !!page.extra, description: SUMMARIES[page.slug] ?? lead(md), headings: headings(md) });
 }
 fs.writeFileSync(path.join(out, 'docs.json'), JSON.stringify(index, null, 2) + '\n');
 console.log(`docs: wrote ${index.length} pages`);

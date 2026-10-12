@@ -9,7 +9,7 @@ export function ViewerDemo() {
   const ref = useRef<WordcraftEditorRef>(null);
   const [name, setName] = useState('The Open Studio Handbook');
   return (
-    <div className="panel">
+    <div className="demo-frame">
       <div className="controls">
         <label className="btn">
           Open a .docx…

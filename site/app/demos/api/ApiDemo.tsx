@@ -50,7 +50,7 @@ export function ApiDemo() {
   const [out, setOut] = useState('Results appear here.');
   return (
     <div className="api-grid">
-      <div className="panel">
+      <div className="demo-frame">
         <div className="api-list">
           {ACTIONS.map((a) => (
             <button
@@ -74,7 +74,7 @@ export function ApiDemo() {
         </div>
         <pre className="output">{out}</pre>
       </div>
-      <div className="panel">
+      <div className="demo-frame">
         <Editor ref={ref} sample user={{ name: 'You' }} />
       </div>
     </div>
