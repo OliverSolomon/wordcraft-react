@@ -35,6 +35,7 @@ runs:
         WORDCRAFT_FAKE_AI=1 npx next start -p 3000 > next.log 2>&1 &
         for i in $(seq 1 30); do curl -sf http://localhost:3000/ >/dev/null && break; sleep 1; done
         WORDCRAFT_FAKE_AI=1 npm run smoke -- http://localhost:3000/
+        npm run smoke:mobile -- http://localhost:3000
     - name: Co-editing smoke test (two browsers through y-websocket)
       shell: bash
       working-directory: examples/nextjs

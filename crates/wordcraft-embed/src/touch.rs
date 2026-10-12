@@ -126,7 +126,9 @@ impl Recognizer {
         let mut effects = Vec::new();
         let has_touch = events.iter().any(|e| matches!(e, Event::Touch { .. }));
         // A mouse press or a key stops a fling; a mouse never starts a gesture.
-        if events.iter().any(|e| matches!(e, Event::Key { pressed: true, .. })) || (!has_touch && events.iter().any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))) {
+        if events.iter().any(|e| matches!(e, Event::Key { pressed: true, .. }))
+            || (!has_touch && events.iter().any(|e| matches!(e, Event::PointerButton { pressed: true, .. })))
+        {
             self.fling = Vec2::ZERO;
         }
         if !has_touch {

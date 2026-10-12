@@ -35,7 +35,17 @@ pub struct TouchState {
 
 impl Default for TouchState {
     fn default() -> Self {
-        Self { on: true, rec: Recognizer::default(), handles: [None; 2], lift: [0.0; 2], show_handles: false, fixed: None, selected: false, last_time: None, last_report: String::new() }
+        Self {
+            on: true,
+            rec: Recognizer::default(),
+            handles: [None; 2],
+            lift: [0.0; 2],
+            show_handles: false,
+            fixed: None,
+            selected: false,
+            last_time: None,
+            last_report: String::new(),
+        }
     }
 }
 
@@ -152,7 +162,9 @@ impl TouchState {
         let hint = app.session.page_hint;
         for (i, pos) in [start, end].iter().enumerate() {
             let Some(c) = layout.caret_on(pos, hint) else { continue };
-            let (Some(top), Some(bottom)) = (page_to_screen(app, c.page, c.x, c.top), page_to_screen(app, c.page, c.x, c.top + c.height)) else { continue };
+            let (Some(top), Some(bottom)) = (page_to_screen(app, c.page, c.x, c.top), page_to_screen(app, c.page, c.x, c.top + c.height)) else {
+                continue;
+            };
             if !clip.contains(bottom) {
                 continue;
             }
