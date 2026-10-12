@@ -83,7 +83,10 @@ const canvasBox = (page) => page.evaluate(() => {
 
 // ---------------------------------------------------------------------------------------------
 
-await phone('pixel', devices['Pixel 7'], async (page, touch) => {
+// Gestures run at a device pixel ratio of 1: under DevTools emulation Chromium reports the canvas's
+// device-pixel size in CSS pixels, so eframe's touch positions and its layout disagree by the
+// emulated ratio. Real phones report both consistently.
+await phone('pixel', { ...devices['Pixel 7'], deviceScaleFactor: 1 }, async (page, touch) => {
   await page.goto(`${base}/mobile`, { waitUntil: 'load' });
   await ready(page);
 
@@ -111,7 +114,9 @@ await phone('pixel', devices['Pixel 7'], async (page, touch) => {
   await page.waitForTimeout(900);
   const scrolled = await info(page);
   assert.equal(scrolled.collapsed, true, 'a drag does not select');
-  assert.ok(scrolled.scrolled <= -300, `touch scrolled ${scrolled.scrolled}`);
+  // The title bar slides away during the drag and the page grows into its 48px, so the page
+  // itself scrolls 48px less while the text stays under the finger.
+  assert.ok(scrolled.scrolled <= -260, `touch scrolled ${scrolled.scrolled}`);
   assert.ok(!scrolled.rect || scrolled.rect.y < tapped.rect.y - 250, `content moved up: ${tapped.rect.y} -> ${scrolled.rect?.y}`);
   await page.screenshot({ path: 'smoke-mobile-2-scrolled.png' });
   // Shy chrome: scrolling down hid the title bar.

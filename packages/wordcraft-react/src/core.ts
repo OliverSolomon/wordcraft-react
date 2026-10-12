@@ -501,7 +501,9 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
   const canvas = document.createElement('canvas');
   canvas.setAttribute('data-wordcraft', '');
   canvas.tabIndex = 0;
-  Object.assign(canvas.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', display: 'block', outline: 'none' });
+  // touch-action: the editor handles every finger on the page itself (scrolling, selecting,
+  // zooming), so the browser must not pan or zoom the host page under it.
+  Object.assign(canvas.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', display: 'block', outline: 'none', touchAction: 'none' });
   container.appendChild(canvas);
 
   const initial = options.document;

@@ -367,6 +367,7 @@ impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let Ok(mut guard) = self.shared.app.try_borrow_mut() else { return };
         let Some(app) = guard.as_mut() else { return };
+        fit_web_layout(app);
         app.ui(ui);
         point_autosave(&self.shared, app);
         self.collab_frame(app, ui);
@@ -374,6 +375,22 @@ impl eframe::App for Shell {
         self.font_requests(app);
         self.host_events(app);
         self.note_changes(app);
+    }
+}
+
+/// Web Layout (and Draft and Outline) as wide as the window, as in Word: on a phone that is Mobile
+/// View, the text reflowed to the screen. Upstream lays them out 800pt wide whatever the window.
+fn fit_web_layout(app: &mut WordApp) {
+    use wordcraft_layout::ViewMode;
+    if app.session.view.mode == ViewMode::Print {
+        return;
+    }
+    let Some(area) = app.canvas.canvas_rect else { return };
+    // The canvas keeps 14 points for its scroll bar and an 18-point gap each side of the page.
+    let scale = app.session.view.zoom.clamp(0.1, 5.0) * wordcraft_ui_egui::canvas::PX_PER_PT;
+    let width = ((area.width() - 14.0 - 36.0) / scale).max(144.0).round();
+    if width.is_finite() && (app.session.view.web_width - width).abs() >= 1.0 {
+        app.session.view.web_width = width;
     }
 }
 

@@ -417,16 +417,25 @@ export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommand
     lastContextual.current = ctxKey;
   }, [ctxKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Shy chrome: scrolling down the document hides the bars, scrolling up brings them back.
+  // Shy chrome: scrolling down the document hides the bars, scrolling up brings them back. A
+  // steady 24px in one direction decides; just after the bars move, the page resizes under the
+  // finger, so that jump is not taken for scrolling.
+  const shyAcc = useRef(0);
+  const shyQuietUntil = useRef(0);
   useEffect(() => {
     if (!shy || !info) return;
     const prev = lastScrolled.current;
     lastScrolled.current = info.scrolled;
-    if (prev === null) return;
+    if (prev === null || performance.now() < shyQuietUntil.current) return;
     const d = info.scrolled - prev;
-    if (d < -6 && sheet !== 'open' && !finding) setHidden(true);
-    else if (d > 6) setHidden(false);
-  }, [info, shy, sheet, finding]);
+    shyAcc.current = Math.sign(d) === Math.sign(shyAcc.current) ? shyAcc.current + d : d;
+    const want = shyAcc.current < -24 && sheet !== 'open' && !finding ? true : shyAcc.current > 24 ? false : hidden;
+    if (want !== hidden) {
+      shyAcc.current = 0;
+      shyQuietUntil.current = performance.now() + 350;
+      setHidden(want);
+    }
+  }, [info, shy, sheet, finding, hidden]);
 
   // The soft keyboard: keep the palette just above it.
   useEffect(() => {
@@ -1453,6 +1462,6 @@ position:absolute;inset:0;z-index:5;pointer-events:none;font:16px/1.35 Roboto,"S
 .wcm-find-options label{display:flex;align-items:center;gap:6px}
 .wcm-top:has(.wcm-find-options),.wcm-top:has(.wcm-find-row+.wcm-find-row){height:auto!important;align-items:flex-start}
 @keyframes wcm-pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:none}}
-@keyframes wcm-up{from{transform:translateY(24px);opacity:.6}to{transform:none;opacity:1}}
+@keyframes wcm-up{from{transform:translateY(24px)}to{transform:none}}
 @media (prefers-reduced-motion:reduce){.wcm *{animation:none!important;transition:none!important}}
 `;
