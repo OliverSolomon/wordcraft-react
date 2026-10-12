@@ -20,7 +20,7 @@ export function FontsDemo() {
     setNote(ed.hasFont(font) ? `${font} is loaded and in use.` : `${font} is still downloading.`);
   };
   return (
-    <div className="panel">
+    <div className="demo-frame">
       <div className="controls">
         {PICKS.map((f) => (
           <button key={f} type="button" className="btn" onClick={() => void apply(f)}>

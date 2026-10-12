@@ -1,4 +1,4 @@
-From f9f37122d8fead8af3df6263b16e07a666077d22 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Sun, 11 Oct 2026 06:53:25 +0300
 Subject: [PATCH 3/5] Host controls: ribbon tabs, Viewing mode, turned-off
@@ -21,15 +21,15 @@ Subject: [PATCH 3/5] Host controls: ribbon tabs, Viewing mode, turned-off
  crates/ui-egui/src/lib.rs      | 84 ++++++++++++++++++++++++++++++++++
  crates/ui-egui/src/panes.rs    | 10 +++-
  crates/ui-egui/src/previews.rs |  5 ++
- crates/ui-egui/src/ribbon.rs   | 42 ++++++++++-------
+ crates/ui-egui/src/ribbon.rs   | 41 ++++++++++-------
  crates/ui-egui/src/widgets.rs  | 21 ++++++++-
- 8 files changed, 187 insertions(+), 22 deletions(-)
+ 8 files changed, 187 insertions(+), 21 deletions(-)
 
 diff --git a/crates/engine/src/session.rs b/crates/engine/src/session.rs
-index 09908a3..b9904e8 100644
+index 44c25b7..e402626 100644
 --- a/crates/engine/src/session.rs
 +++ b/crates/engine/src/session.rs
-@@ -256,6 +256,10 @@ pub struct Session {
+@@ -296,6 +296,10 @@ pub struct Session {
      pub external_history: bool,
      pub history_requests: Vec<bool>,
      pub external_can: (bool, bool),
@@ -40,7 +40,7 @@ index 09908a3..b9904e8 100644
      /// Editing inside an equation: which one and the caret in it.
      pub math: Option<MathEdit>,
      /// Equations are typed in LaTeX rather than the linear format.
-@@ -353,6 +357,8 @@ impl Session {
+@@ -455,6 +459,8 @@ impl Session {
              external_history: false,
              history_requests: Vec::new(),
              external_can: (false, false),
@@ -49,7 +49,7 @@ index 09908a3..b9904e8 100644
              read_aloud: Default::default(),
              password: None,
              column: None,
-@@ -470,6 +476,23 @@ impl Session {
+@@ -624,6 +630,23 @@ impl Session {
      pub fn close_typing(&mut self) {
          self.typing_open = false;
      }
@@ -73,7 +73,7 @@ index 09908a3..b9904e8 100644
      pub fn can_undo(&self) -> bool {
          if self.external_history {
              return self.external_can.0;
-@@ -604,6 +627,8 @@ impl Session {
+@@ -779,6 +802,8 @@ impl Session {
              external_history: _,
              history_requests: _,
              external_can: _,
@@ -82,21 +82,21 @@ index 09908a3..b9904e8 100644
              // Equation editing mode, like `view`: not part of the document or its history.
              math: _,
              math_latex: _,
-@@ -682,6 +707,9 @@ impl Session {
+@@ -860,6 +885,9 @@ impl Session {
          if let Some(why) = (spec.enabled)(self) {
              return Err(CmdError::Disabled(format!("{id}: {why}")));
          }
 +        if let Some(why) = self.host_block(id, spec.mutates) {
 +            return Err(CmdError::Disabled(format!("{id}: {why}")));
 +        }
-         // Restrict Editing.
-         if spec.mutates
-             && let Some(mode) = self.doc.settings.protection.clone()
+         // Restrict Editing: refused outright, or allowed as long as it only edits the exceptions.
+         let guard = if spec.mutates { crate::cmd::protect::check_before(self, id, params)? } else { false };
+         if spec.mutates && self.doc.settings.protection.as_deref() == Some("trackedChanges") {
 diff --git a/crates/fonts/src/fontdb.rs b/crates/fonts/src/fontdb.rs
-index db1180e..25b5790 100644
+index 2d0573a..8bf6241 100644
 --- a/crates/fonts/src/fontdb.rs
 +++ b/crates/fonts/src/fontdb.rs
-@@ -725,6 +725,11 @@ impl FontDb {
+@@ -1014,6 +1014,11 @@ impl FontDb {
                  added += 1;
              }
          }
@@ -109,10 +109,10 @@ index db1180e..25b5790 100644
      }
  
 diff --git a/crates/fonts/src/word.rs b/crates/fonts/src/word.rs
-index b4461c0..4902d7e 100644
+index 5cb79f5..8a40b6a 100644
 --- a/crates/fonts/src/word.rs
 +++ b/crates/fonts/src/word.rs
-@@ -157,10 +157,20 @@ fn style_name(bold: bool, italic: bool) -> &'static str {
+@@ -174,10 +174,20 @@ fn style_name(bold: bool, italic: bool) -> &'static str {
      }
  }
  
@@ -136,10 +136,10 @@ index b4461c0..4902d7e 100644
      if let Some(r) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
          return *r;
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index 6ab45d4..b79a087 100644
+index 2f56adc..8cad9d9 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
-@@ -116,6 +116,10 @@ pub struct UiState {
+@@ -138,6 +138,10 @@ pub struct UiState {
      pub hide_title_bar: bool,
      /// Embedded: hide the ribbon including its tab row (Word's "Auto-hide Ribbon").
      pub hide_ribbon: bool,
@@ -150,7 +150,7 @@ index 6ab45d4..b79a087 100644
      /// Editing preferences; the session owns them while running (see [`WordApp::prefs`]).
      pub editing: wordcraft_engine::Prefs,
      /// Read Aloud speed (1 = normal) and whether it skips citations and bibliographies.
-@@ -152,6 +156,8 @@ impl Default for UiState {
+@@ -208,6 +212,8 @@ impl Default for UiState {
              language: i18n::AUTO.into(),
              hide_title_bar: false,
              hide_ribbon: false,
@@ -159,7 +159,7 @@ index 6ab45d4..b79a087 100644
              editing: wordcraft_engine::Prefs::default(),
              read_aloud_rate: 1.0,
              read_aloud_skip_citations: true,
-@@ -210,6 +216,12 @@ pub struct WordApp {
+@@ -301,6 +307,12 @@ pub struct WordApp {
      pub autosave: bool,
      /// Other people editing now (real-time co-editing), shown beside the account avatar.
      pub collaborators: Vec<Collaborator>,
@@ -172,7 +172,7 @@ index 6ab45d4..b79a087 100644
      pub word_count: (u64, usize),
      last_autosave: f64,
      /// The tab shown before the Equation tab came up (restored when editing ends).
-@@ -282,6 +294,8 @@ impl WordApp {
+@@ -382,6 +394,8 @@ impl WordApp {
              quit_requested: false,
              autosave: true,
              collaborators: Vec::new(),
@@ -181,7 +181,7 @@ index 6ab45d4..b79a087 100644
              word_count: (0, 0),
              last_autosave: 0.0,
              equation_prev_tab: None,
-@@ -379,6 +393,11 @@ impl WordApp {
+@@ -507,6 +521,11 @@ impl WordApp {
          if !matches!(id, "ui.openRecipientList" | "mailings.recipients") {
              self.recipient_list_pending = false;
          }
@@ -193,7 +193,7 @@ index 6ab45d4..b79a087 100644
          if let Some(r) = self.ui_command(id, &params) {
              return r;
          }
-@@ -621,6 +640,22 @@ impl WordApp {
+@@ -770,6 +789,22 @@ impl WordApp {
                  self.pick_picture();
                  json!({"pending": self.change_picture_target.is_some()})
              }
@@ -216,7 +216,7 @@ index 6ab45d4..b79a087 100644
              "ui.collapseRibbon" => {
                  self.ui.ribbon_collapsed = !self.ui.ribbon_collapsed;
                  json!({"collapsed": self.ui.ribbon_collapsed})
-@@ -874,6 +909,52 @@ impl WordApp {
+@@ -1063,6 +1098,52 @@ impl WordApp {
          self.session.path.is_some() && self.session.path == self.autosave_path
      }
  
@@ -269,7 +269,7 @@ index 6ab45d4..b79a087 100644
      /// Let AutoSave write to `path`, as if the user had saved there in this session (`None` stops
      /// it). For hosts that keep documents themselves, such as a web page embedding WordCraft: on
      /// the web AutoSave then hands each save to `Services::download`, which the host handles.
-@@ -971,6 +1052,9 @@ impl WordApp {
+@@ -1160,6 +1241,9 @@ impl WordApp {
          // Keytips are read before layout so the frame paints the new state; badges paint after
          // the ribbon so they sit on top of it.
          crate::keytips::logic(self, &ctx);
@@ -280,10 +280,10 @@ index 6ab45d4..b79a087 100644
              backstage::show(self, ui);
          } else {
 diff --git a/crates/ui-egui/src/panes.rs b/crates/ui-egui/src/panes.rs
-index df88068..04b3493 100644
+index c795d91..3ab15bd 100644
 --- a/crates/ui-egui/src/panes.rs
 +++ b/crates/ui-egui/src/panes.rs
-@@ -282,7 +282,7 @@ fn comments(app: &mut WordApp, ui: &mut Ui) {
+@@ -329,7 +329,7 @@ fn comments(app: &mut WordApp, ui: &mut Ui) {
          for c in list.as_array().cloned().unwrap_or_default() {
              let id = c.get("id").and_then(Value::as_u64).unwrap_or(0);
              let reply = c.get("parent").is_some_and(|p| !p.is_null());
@@ -292,7 +292,7 @@ index df88068..04b3493 100644
                  ui.set_width(ui.available_width());
                  if reply {
                      ui.add_space(0.0);
-@@ -324,6 +324,14 @@ fn comments(app: &mut WordApp, ui: &mut Ui) {
+@@ -371,6 +371,14 @@ fn comments(app: &mut WordApp, ui: &mut Ui) {
                      }
                  }
              });
@@ -308,10 +308,10 @@ index df88068..04b3493 100644
          }
      });
 diff --git a/crates/ui-egui/src/previews.rs b/crates/ui-egui/src/previews.rs
-index fce5f36..0404b00 100644
+index 5127d10..03b4291 100644
 --- a/crates/ui-egui/src/previews.rs
 +++ b/crates/ui-egui/src/previews.rs
-@@ -23,6 +23,11 @@ pub struct Previews {
+@@ -29,6 +29,11 @@ pub struct Previews {
  }
  
  impl Previews {
@@ -320,32 +320,24 @@ index fce5f36..0404b00 100644
 +        self.families = None;
 +    }
 +
+     /// The font list: installed families, each by its name in the interface language when it has
+     /// one (宋体 for SimSun in Chinese, #505), like Word's.
      pub fn families(&mut self) -> Vec<String> {
-         if self.families.is_none() {
-             let mut f: Vec<String> = wordcraft_fonts::FontDb::global().families().into_iter().filter(|f| !f.starts_with('.')).collect();
 diff --git a/crates/ui-egui/src/ribbon.rs b/crates/ui-egui/src/ribbon.rs
-index 8682f8d..62cc9fb 100644
+index 78fac2d..8f9cdda 100644
 --- a/crates/ui-egui/src/ribbon.rs
 +++ b/crates/ui-egui/src/ribbon.rs
-@@ -64,7 +64,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
-     }
-     // A contextual tab (Table, Picture Format) may be stored while the selection moved away.
-     {
--        let mut tabs: Vec<&str> = TABS.to_vec();
-+        let mut tabs: Vec<&str> = TABS.iter().copied().filter(|t| app.tab_shown(t)).collect();
-         tabs.extend(contextual_tabs(&app.session));
-         let next = resolve_tab(&app.ui.tab, &tabs);
-         if next != app.ui.tab {
-@@ -78,7 +78,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
-         .show(ui, |ui| {
-             ui.horizontal_centered(|ui| {
-                 ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
--                let mut tabs: Vec<&str> = TABS.to_vec();
-+                let mut tabs: Vec<&str> = TABS.iter().copied().filter(|t| app.tab_shown(t)).collect();
-                 for ct in contextual_tabs(&app.session) {
-                     if !tabs.contains(&ct) {
-                         tabs.push(ct);
-@@ -127,21 +127,27 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+@@ -102,7 +102,8 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+     // Format) may be stored while the selection moved away, and a tab may have been hidden.
+     let user_tabs = app.session.ribbon.tabs().into_owned();
+     let mut tabs: Vec<(String, bool)> = vec![("File".to_string(), false)];
+-    tabs.extend(user_tabs.iter().filter(|e| !e.hidden).map(|e| (e.name.clone(), e.custom)));
++    // The host may leave tabs out (`hidden_tabs`).
++    tabs.extend(user_tabs.iter().filter(|e| !e.hidden && app.tab_shown(&e.name)).map(|e| (e.name.clone(), e.custom)));
+     for ct in contextual_tabs(&app.session) {
+         if ct == "Outlining" {
+             tabs.insert(1.min(tabs.len()), (ct.to_string(), false));
+@@ -171,21 +172,27 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                          let _ = app.run("ui.backstage", json!({"value": true, "page": "export"}));
                      }
                      ui.add_space(6.0);
@@ -386,14 +378,15 @@ index 8682f8d..62cc9fb 100644
                          }
                      });
                      ui.add_space(4.0);
-@@ -279,10 +285,12 @@ fn home(app: &mut WordApp, ui: &mut Ui) {
-         stack(ui, |ui| {
+@@ -411,11 +418,13 @@ fn home(app: &mut WordApp, ui: &mut Ui) {
              crate::widgets::row(ui, |ui| {
                  let font = st.get("font").and_then(Value::as_str).unwrap_or("").to_string();
+                 let font = app.previews.font_shown(&font);
 -                let fams = app.previews.families();
 +                let fams = app.font_box_items();
                  let prev = app.previews.font_preview_fn();
                  if let Some(f) = font_combo(ui, "font", 150.0, &font, &fams, Some(&*prev)) {
+                     let f = app.previews.font_stored(&f);
 -                    let _ = app.run("format.font", json!({"name": f}));
 +                    if app.run("format.font", json!({"name": f})).is_ok() {
 +                        app.font_picked(&f);
@@ -402,10 +395,10 @@ index 8682f8d..62cc9fb 100644
                  let size = st
                      .get("size")
 diff --git a/crates/ui-egui/src/widgets.rs b/crates/ui-egui/src/widgets.rs
-index b680690..cf3a5b9 100644
+index 659d0f3..8a2348c 100644
 --- a/crates/ui-egui/src/widgets.rs
 +++ b/crates/ui-egui/src/widgets.rs
-@@ -76,7 +76,8 @@ fn keytip_badge(ui: &Ui, rect: Rect, id: &str, name: &str) {
+@@ -81,7 +81,8 @@ fn keytip_badge(ui: &Ui, rect: Rect, id: &str, name: &str) {
  /// Whether a command exists and is enabled.
  pub fn enabled(app: &WordApp, id: &str) -> bool {
      match app.session.registry.get(id) {
@@ -414,8 +407,8 @@ index b680690..cf3a5b9 100644
 +        None if app.session.host_block(id, false).is_some() => false,
          // Zotero: one command at a time, and only in the desktop app.
          None if id.starts_with("ui.zotero.") => app.zotero.busy.is_none() && !cfg!(target_arch = "wasm32"),
-         None => id.starts_with("ui."),
-@@ -365,6 +366,9 @@ pub fn font_combo(
+         None if id == "ui.linkTextBox" => enabled(app, "shape.link"),
+@@ -440,6 +441,9 @@ pub fn font_combo(
      combo_impl(ui, id, width, current, items, preview, true)
  }
  
@@ -425,7 +418,7 @@ index b680690..cf3a5b9 100644
  /// Indices of the `items` matching `query`, ignoring case: exact matches, then the names starting
  /// with it, then those containing it, each group in list order. A blank query matches everything.
  pub fn font_matches(query: &str, items: &[String]) -> Vec<usize> {
-@@ -372,8 +376,13 @@ pub fn font_matches(query: &str, items: &[String]) -> Vec<usize> {
+@@ -447,8 +451,13 @@ pub fn font_matches(query: &str, items: &[String]) -> Vec<usize> {
      if q.is_empty() {
          return (0..items.len()).collect();
      }
@@ -439,7 +432,7 @@ index b680690..cf3a5b9 100644
          let name = it.to_lowercase();
          if name == q {
              exact.push(i);
-@@ -464,7 +473,7 @@ fn combo_impl(
+@@ -539,7 +548,7 @@ fn combo_impl(
              if enter {
                  let picked = s.matches.get(s.highlight).and_then(|&i| items.get(i));
                  out = Some(match picked {
@@ -448,7 +441,7 @@ index b680690..cf3a5b9 100644
                      _ => text.clone(),
                  });
                  s.open = false;
-@@ -575,6 +584,14 @@ fn list_rows<'a>(
+@@ -651,6 +660,14 @@ fn list_rows<'a>(
          ui.set_min_width(width + 60.0);
          for k in range {
              let Some(it) = item(k) else { continue };
@@ -463,3 +456,6 @@ index b680690..cf3a5b9 100644
              let lit = highlight == Some(k);
              let clicked = match preview {
                  Some(p) => {
+-- 
+2.43.0
+

@@ -3,11 +3,11 @@
 import { useState } from 'react';
 
 export function CopyInstall() {
-  const cmd = 'npm install @gamine/wordcraft-react';
+  const cmd = 'npm i @gamine/wordcraft-react';
   const [done, setDone] = useState(false);
   return (
     <span className="install">
-      <span>$ {cmd}</span>
+      <span>{cmd}</span>
       <button
         type="button"
         onClick={() => {

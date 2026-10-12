@@ -7,6 +7,8 @@ export interface DocEntry {
   title: string;
   group: string;
   extra: boolean;
+  description: string;
+  headings: string[];
 }
 
 const CONTENT = path.join(process.cwd(), 'content');

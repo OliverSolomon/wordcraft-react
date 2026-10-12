@@ -1,4 +1,4 @@
-From 40eb8909f3cd9747ecfd499c3687f922d5e74639 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Sun, 11 Oct 2026 08:03:35 +0300
 Subject: [PATCH 4/5] AI button and Word's ribbon collapse
@@ -9,16 +9,16 @@ Subject: [PATCH 4/5] AI button and Word's ribbon collapse
   While collapsed, clicking a tab opens the ribbon over the page until you
   click elsewhere or press Esc; its pin keeps it open.
 ---
- crates/ui-egui/src/icons.rs  |  11 +++
+ crates/ui-egui/src/icons.rs  |  11 ++
  crates/ui-egui/src/lib.rs    |   9 ++
- crates/ui-egui/src/ribbon.rs | 161 +++++++++++++++++++++++------------
- 3 files changed, 127 insertions(+), 54 deletions(-)
+ crates/ui-egui/src/ribbon.rs | 193 ++++++++++++++++++++++-------------
+ 3 files changed, 143 insertions(+), 70 deletions(-)
 
 diff --git a/crates/ui-egui/src/icons.rs b/crates/ui-egui/src/icons.rs
-index 589667e..5bcbdf0 100644
+index 20fac5f..987ed7b 100644
 --- a/crates/ui-egui/src/icons.rs
 +++ b/crates/ui-egui/src/icons.rs
-@@ -1078,6 +1078,17 @@ pub fn paint(p: &Painter, r: Rect, name: &str, c: Color32, accent: Color32) {
+@@ -1215,6 +1215,17 @@ pub fn paint(p: &Painter, r: Rect, name: &str, c: Color32, accent: Color32) {
              pen.rect(7.0, 2.0, 13.0, 9.0, c);
              pen.line(&[(5.0, 12.0), (15.0, 12.0)]);
          }
@@ -37,10 +37,10 @@ index 589667e..5bcbdf0 100644
              pen.line(&[(10.0, 4.0), (10.0, 16.0)]);
              pen.line(&[(4.0, 10.0), (16.0, 10.0)]);
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index b79a087..3641466 100644
+index 8cad9d9..04b7199 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
-@@ -222,6 +222,12 @@ pub struct WordApp {
+@@ -313,6 +313,12 @@ pub struct WordApp {
      /// Families picked that aren't installed yet: the host fetches them, adds them with
      /// `FontDb::add_font`, then calls [`WordApp::fonts_changed`].
      pub font_requests: Vec<String>,
@@ -53,7 +53,7 @@ index b79a087..3641466 100644
      pub word_count: (u64, usize),
      last_autosave: f64,
      /// The tab shown before the Equation tab came up (restored when editing ends).
-@@ -296,6 +302,9 @@ impl WordApp {
+@@ -396,6 +402,9 @@ impl WordApp {
              collaborators: Vec::new(),
              cloud_fonts: Vec::new(),
              font_requests: Vec::new(),
@@ -64,10 +64,10 @@ index b79a087..3641466 100644
              last_autosave: 0.0,
              equation_prev_tab: None,
 diff --git a/crates/ui-egui/src/ribbon.rs b/crates/ui-egui/src/ribbon.rs
-index 62cc9fb..837d1dd 100644
+index 8f9cdda..6689adf 100644
 --- a/crates/ui-egui/src/ribbon.rs
 +++ b/crates/ui-egui/src/ribbon.rs
-@@ -72,7 +72,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+@@ -120,7 +120,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
          }
      }
      // Tab strip.
@@ -76,7 +76,7 @@ index 62cc9fb..837d1dd 100644
          .exact_size(30.0)
          .frame(egui::Frame::NONE.fill(t.tab_strip).inner_margin(egui::Margin { left: 8, right: 10, top: 0, bottom: 0 }))
          .show(ui, |ui| {
-@@ -104,6 +104,10 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+@@ -148,6 +148,10 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                      }
                      if resp.clicked() {
                          let _ = app.run("ui.tab", json!({"tab": tab}));
@@ -87,7 +87,7 @@ index 62cc9fb..837d1dd 100644
                      }
                      if resp.double_clicked() && tab != "File" {
                          let _ = app.run("ui.collapseRibbon", json!({}));
-@@ -154,67 +158,116 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+@@ -199,85 +203,134 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                      if crate::widgets::icon_text_button(ui, "comment", tl!("Comments"), regular(12.0)).clicked() {
                          let _ = app.run("view.commentsPane", json!({}));
                      }
@@ -119,7 +119,7 @@ index 62cc9fb..837d1dd 100644
 +                    |ui| {
 +                        ui.set_width(width - 16.0);
 +                        ui.set_height(CONTENT_H + LABEL_H + 2.0);
-+                        ribbon_body(app, ui, &t);
++                        ribbon_body(app, ui, &t, &user_tabs);
 +                        corner_button(ui, app, "pin", tl!("Pin the ribbon (always show it)"));
 +                    },
 +                );
@@ -137,9 +137,20 @@ index 62cc9fb..837d1dd 100644
 -            egui::Frame::NONE.fill(t.ribbon).inner_margin(egui::Margin { left: 8, right: 8, top: 4, bottom: 4 }).stroke(Stroke::new(1.0, t.border)),
 -        )
 -        .show(ui, |ui| {
+-            // Right-click on the ribbon (outside a button): Customize Ribbon. Registered first, so
+-            // the buttons drawn over it keep their own clicks.
+-            let bg = ui.interact(ui.max_rect(), ui.id().with("ribbon_background"), Sense::click());
+-            bg.context_menu(|ui| crate::widgets::customize_menu_items(ui, app));
+-            let entry = user_tabs.iter().find(|e| e.name == app.ui.tab);
 -            let scroll = egui::ScrollArea::horizontal().scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
 -                ui.horizontal_top(|ui| {
 -                    ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
+-                    match entry {
+-                        // Every tab hidden: nothing to show.
+-                        Some(e) if e.hidden => return,
+-                        Some(e) if e.custom => return custom_groups(app, ui, &e.groups),
+-                        _ => {}
+-                    }
 -                    match app.ui.tab.as_str() {
 -                        "Home" => home(app, ui),
 -                        "Insert" => insert(app, ui),
@@ -150,6 +161,7 @@ index 62cc9fb..837d1dd 100644
 -                        "Mailings" => mailings(app, ui),
 -                        "Review" => review(app, ui),
 -                        "View" => view(app, ui),
+-                        "Developer" => developer(app, ui),
 -                        "Zotero" => zotero(app, ui),
 -                        "Help" => help(app, ui),
 -                        "Table Design" => table_design(app, ui),
@@ -157,7 +169,13 @@ index 62cc9fb..837d1dd 100644
 -                        "Equation" if app.session.math.is_some() => crate::equation_tab::show(app, ui),
 -                        "Picture Format" => picture_format(app, ui),
 -                        "Shape Format" => shape_format(app, ui),
+-                        "SmartArt Design" => smart_art_design(app, ui),
+-                        "Outlining" => outlining(app, ui),
+-                        "Chart Design" => chart_design(app, ui),
 -                        _ => home(app, ui),
+-                    }
+-                    if let Some(e) = entry {
+-                        custom_groups(app, ui, &e.groups);
 -                    }
 -                });
 -            });
@@ -173,19 +191,8 @@ index 62cc9fb..837d1dd 100644
 -                if edge_cue(ui, left, "‹", tl!("Scroll ribbon left"), &t) {
 -                    next = Some(offset - step);
 -                }
--            }
--            if overflow - offset > 1.0 {
--                let right = Rect::from_min_max(pos2(r.right() - 18.0, r.top()), r.right_bottom());
--                if edge_cue(ui, right, "›", tl!("Scroll ribbon right"), &t) {
--                    next = Some(offset + step);
--                }
--            }
--            if let Some(x) = next {
--                let mut state = scroll.state;
--                state.offset.x = x.clamp(0.0, overflow.max(0.0));
--                state.store(ui.ctx(), scroll.id);
 +    egui::Panel::top("ribbon").exact_size(CONTENT_H + LABEL_H + 10.0).frame(frame).show(ui, |ui| {
-+        ribbon_body(app, ui, &t);
++        ribbon_body(app, ui, &t, &user_tabs);
 +        corner_button(ui, app, "chevronUp", tl!("Collapse the ribbon (show tabs only)"));
 +    });
 +}
@@ -205,10 +212,26 @@ index 62cc9fb..837d1dd 100644
 +}
 +
 +/// The ribbon's groups for the current tab, scrolled sideways when they don't fit.
-+fn ribbon_body(app: &mut WordApp, ui: &mut Ui, t: &Tokens) {
++fn ribbon_body(app: &mut WordApp, ui: &mut Ui, t: &Tokens, user_tabs: &[wordcraft_engine::ribbon::TabEntry]) {
++    // Right-click on the ribbon (outside a button): Customize Ribbon. Registered first, so
++    // the buttons drawn over it keep their own clicks.
++    let bg = ui.interact(ui.max_rect(), ui.id().with("ribbon_background"), Sense::click());
++    bg.context_menu(|ui| crate::widgets::customize_menu_items(ui, app));
++    let entry = user_tabs.iter().find(|e| e.name == app.ui.tab);
 +    let scroll = egui::ScrollArea::horizontal().scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
 +        ui.horizontal_top(|ui| {
 +            ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
++            match entry {
++                // Every tab hidden: nothing to show.
++                Some(e) if e.hidden => return,
++                Some(e) if e.custom => return custom_groups(app, ui, &e.groups),
++                _ => {}
+             }
+-            if overflow - offset > 1.0 {
+-                let right = Rect::from_min_max(pos2(r.right() - 18.0, r.top()), r.right_bottom());
+-                if edge_cue(ui, right, "›", tl!("Scroll ribbon right"), &t) {
+-                    next = Some(offset + step);
+-                }
 +            match app.ui.tab.as_str() {
 +                "Home" => home(app, ui),
 +                "Insert" => insert(app, ui),
@@ -219,6 +242,7 @@ index 62cc9fb..837d1dd 100644
 +                "Mailings" => mailings(app, ui),
 +                "Review" => review(app, ui),
 +                "View" => view(app, ui),
++                "Developer" => developer(app, ui),
 +                "Zotero" => zotero(app, ui),
 +                "Help" => help(app, ui),
 +                "Table Design" => table_design(app, ui),
@@ -226,7 +250,17 @@ index 62cc9fb..837d1dd 100644
 +                "Equation" if app.session.math.is_some() => crate::equation_tab::show(app, ui),
 +                "Picture Format" => picture_format(app, ui),
 +                "Shape Format" => shape_format(app, ui),
++                "SmartArt Design" => smart_art_design(app, ui),
++                "Outlining" => outlining(app, ui),
++                "Chart Design" => chart_design(app, ui),
 +                _ => home(app, ui),
+             }
+-            if let Some(x) = next {
+-                let mut state = scroll.state;
+-                state.offset.x = x.clamp(0.0, overflow.max(0.0));
+-                state.store(ui.ctx(), scroll.id);
++            if let Some(e) = entry {
++                custom_groups(app, ui, &e.groups);
              }
          });
 +    });
@@ -256,4 +290,7 @@ index 62cc9fb..837d1dd 100644
 +    }
  }
  
- /// A chevron over a ribbon edge that is also a button; `true` on the frame it is clicked.
+ /// Custom groups (Customize Ribbon, #379): up to three commands as large buttons, more as small
+-- 
+2.43.0
+

@@ -8,7 +8,7 @@ import { Editor } from '@/components/Editor';
 export function Playground() {
   const ref = useRef<WordcraftEditorRef>(null);
   const [name, setName] = useState('Ada Lovelace');
-  const [dark, setDark] = useState(false);
+  const [dark, setDark] = useState(true);
   const [titleBar, setTitleBar] = useState(true);
   const [ribbon, setRibbon] = useState<RibbonDisplay>('full');
   const [mode, setMode] = useState<EditorMode>('editing');
@@ -36,7 +36,7 @@ export function Playground() {
   }, [name, dark, titleBar, ribbon, mode, hidden, noOpen, ai, versions]);
 
   return (
-    <div className="panel" style={{ marginBottom: 48 }}>
+    <div className="demo-frame">
       <div className="controls">
         <label>
           Name <input type="text" value={name} onChange={(e) => setName(e.target.value)} style={{ width: 150 }} />
@@ -113,7 +113,7 @@ export function Playground() {
         rev {status.rev} · {status.dirty ? 'unsaved changes' : 'saved'}
         {saved && ` · last onSave: ${saved}`} · The editor is on <code>window.wordcraft</code> for your console.
       </div>
-      <pre className="codeblock" style={{ margin: 16, boxShadow: 'none' }}>
+      <pre className="codeblock" style={{ margin: 16 }}>
         {code}
       </pre>
     </div>

@@ -4,6 +4,21 @@ Every published version of `@gamine/wordcraft-react`, newest first. Versions fol
 
 Features marked ✦ are Extras: additions of this package that are not part of Microsoft Word or WordCraft. [docs/DIVERGENCES.md](docs/DIVERGENCES.md) lists every way the package differs from WordCraft.
 
+## 0.3.2 (2026-10-12)
+
+- **Upstream:** synced to WordCraft `62b58d1`, 95 commits since `1d4f741`. Word coverage rises from 402 of 434 to 482 of 497 catalogued features. The main additions:
+  - **Insert:** SmartArt (list, process, cycle, hierarchy, pyramid, radial, matrix, venn), Chart (column, bar, line, pie, area, scatter, doughnut), Icons (an original library), Drawing Canvas, WordArt effects and shape connectors.
+  - **Layout and views:** Outline view with the Outlining tab, vertical text, the document grid, right-to-left tables and sections, balanced newspaper columns, Tight and Through wrapping, footnote and endnote options per section.
+  - **Review and references:** Track Changes moves, Compare, Restrict Editing, content controls, and dialogs for Caption, Index, Table of Contents, Create Source, Line Numbers, Hyphenation, Language, Envelopes and Labels.
+  - **Editing:** a two-row mini toolbar, dragging after a double- or triple-click extends by words or paragraphs, Find and Replace special characters and wildcards, Word's common shortcuts, moving paragraphs, Alt+X, field codes.
+  - **East Asian text:** Phonetic Guide, Enclose Characters, Chinese, Japanese and Korean numbering, separate Asian fonts, Myanmar, Khmer and Indic shaping.
+  - **Files and printing:** Word XML (Flat OPC) and Word 2003 XML, Print preview with page ranges, Print Markup, mail merge from spreadsheets, many .doc, RTF, ODT and HTML fixes.
+  - **Customising:** Customize Ribbon and Quick Access Toolbar, Customize Keyboard, File › Options panes, Templates and Add-ins.
+  - **Interface:** Russian and Turkish, screen-reader access to the document, More Colors.
+- **Co-editing:** content controls and text-box text settings are now shared, so the new upstream features survive real-time editing.
+- **Patches:** rebased onto the new upstream. The mini toolbar and double-click fixes upstream made replace ours; patch 0005 keeps Bullets, Numbering and New Comment on the toolbar and the toolbar above the right-click menu, and patch 0004 keeps the ribbon collapse alongside upstream's Customize Ribbon.
+- **Docs site:** a calm app-style layout with a sidebar, search (Ctrl+K or ⌘K), light and dark themes, and on each feature page a preview of real screenshots, a live example and the code.
+
 ## 0.3.1 (2026-10-11)
 
 - **Version history** ✦, in the style of Google Docs. Versions are recorded as people work (every few minutes while the document changes, on each save, and before a restore). A panel lists them by day with author and word count. You can view one read only in place of the document, restore it as one undoable step, name it, download it as .docx or delete it. It opens from the title bar, File › Info and Ctrl+Alt+Shift+H. Versions stay in the browser by default; `httpVersionStore` or your own `VersionStore` keeps them on your server.

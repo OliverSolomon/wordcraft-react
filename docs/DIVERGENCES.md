@@ -14,8 +14,7 @@ Rows marked ✦ are **Extras**: features that are not part of Microsoft Word or 
 
 | Area | WordCraft | This package | Where |
 |---|---|---|---|
-| Mini toolbar after a double- or triple-click | Waits for another mouse-up before appearing | Appears straight away, as in Word | Patch 0005 |
-| Mini toolbar contents | Font, size, B I U S, highlight, font colour, alignment | Adds Grow and Shrink Font, Bullets, Numbering and New Comment, as on Windows | Patch 0005 |
+| Mini toolbar contents | Two rows: font, size, Grow and Shrink; B I U S, highlight, font colour, alignment | Adds Bullets, Numbering and New Comment to the second row, as on Windows | Patch 0005 |
 | Mini toolbar with the right-click menu | Hidden while the menu is open | Shown above the menu, as on Windows | Patch 0005 |
 | Vertical ruler | Measures the caret's page only, so it goes blank once that page scrolls away | Measures the page in view when the caret's page is off screen | Patch 0005 |
 | Double-clicking a ruler | Opens the Tabs dialog on a tab marker | Also opens Page Setup elsewhere on either ruler, as in Word | Patch 0005 |
