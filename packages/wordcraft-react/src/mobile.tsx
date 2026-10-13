@@ -322,6 +322,8 @@ export interface MobileShellProps {
   openComments?: number;
   /** How many other people are in the document. */
   people?: number;
+  /** More entries for the More menu (the Extras' panels: Ask this document, Writing checks…). */
+  extraItems?: Array<{ label: string; onPress: () => void }>;
 }
 
 type Sheet = 'peek' | 'open' | 'closed';
@@ -329,7 +331,7 @@ type Sheet = 'peek' | 'open' | 'closed';
 const TITLE_H = 48;
 const PEEK_H = 48;
 
-export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommands, onVersions, onAi, onInsets, permission = 'edit', onComments, openComments = 0, people = 0 }: MobileShellProps) {
+export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommands, onVersions, onAi, onInsets, permission = 'edit', onComments, openComments = 0, people = 0, extraItems = [] }: MobileShellProps) {
   const [sheet, setSheet] = useState<Sheet>('peek');
   const [tab, setTab] = useState<MobileTabId>('Home');
   const [pages, setPages] = useState<PageId[]>([]);
@@ -675,6 +677,9 @@ export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommand
             <MenuItem icon="wordCount" label="Word Count" onPress={() => (setMenu(false), doAction('wordCount'))} />
             {onVersions && <MenuItem icon="history" label="Version History" onPress={() => (setMenu(false), onVersions())} />}
             {onAi && !viewing && <MenuItem icon="sparkle" label="Write with AI" extra onPress={() => (setMenu(false), setSheet('peek'), onAi())} />}
+            {extraItems.map((it) => (
+              <MenuItem key={it.label} icon="sparkle" label={it.label} extra onPress={() => (setMenu(false), setSheet('peek'), it.onPress())} />
+            ))}
             {!locked && <div className="wcm-menu-sep" />}
             {!locked &&
               (['editing', 'reviewing', 'viewing'] as EditorMode[]).map((m) => (

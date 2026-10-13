@@ -361,7 +361,7 @@ export function StructurePanel({ editor, kind, ai, palette, options, suggest, in
   const [asText, setAsText] = useState<string | null>(editDiagram ? editDiagram.source : null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [mode, setMode] = useState<'cursor' | 'replace' | 'below'>(() => (editor.getSelectedText().trim() ? 'below' : 'cursor'));
+  const [mode, setMode] = useState<'cursor' | 'replace' | 'below'>(() => (editDiagram ? 'replace' : editor.getSelectedText().trim() ? 'below' : 'cursor'));
   const abort = useRef<AbortController | null>(null);
   const selection = useMemo(() => editor.getSelectedText().trim(), [editor]);
   const item = STRUCTURE_ITEMS.find((x) => x.kind === kind);
@@ -565,13 +565,13 @@ export function StructurePanel({ editor, kind, ai, palette, options, suggest, in
           )}
           <p className="wcst-marker">AI-generated: check it before use.</p>
           <div className="wcst-row">
-            <select aria-label="Where to insert" value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
+            {!editDiagram && <select aria-label="Where to insert" value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
               <option value="cursor">At the cursor</option>
               {selection && <option value="replace">Replace the selection</option>}
               {selection && <option value="below">Below the selection</option>}
-            </select>
+            </select>}
             <button type="button" className="wcai-btn wcai-primary" disabled={busy} onClick={() => void insert()}>
-              {suggest ? 'Insert as suggestion' : 'Insert'}
+              {editDiagram ? (suggest ? 'Replace as suggestion' : 'Replace diagram') : suggest ? 'Insert as suggestion' : 'Insert'}
             </button>
             {asText === null ? (
               <button type="button" className="wcai-btn" onClick={() => setAsText(blocks.length === 1 && blocks[0].type === 'diagram' ? blocks[0].source : blocksToMarkdown(blocks))}>

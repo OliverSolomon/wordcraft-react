@@ -50,6 +50,9 @@ import type { HostAction, StructureKind, StructureOptions } from './structure.js
 import { insertBlocks, markdownToBlocks } from './blocks.js';
 import { renderDiagram, renderQr } from './renderers.js';
 import { applyTheme } from './theme.js';
+import type { ChatStore } from './chat.js';
+import type { Checker } from './checks.js';
+import type { OriginalityOptions } from './originality.js';
 import { LogoPlacementControls, MiniPage, PaletteFromImage } from './studio-brand.js';
 export { describeAiRequest } from './ai-core.js';
 export type { AiAction, AiRequest } from './ai-core.js';
@@ -125,6 +128,16 @@ export interface AiOptions {
   imageSearch?: StructureOptions['imageSearch'];
   /** Your own actions in the Insert and slash menus, e.g. "Insert the grant budget table from Finance". */
   actions?: HostAction[];
+
+  // ----- reading and checking (Extras) -----
+  /** "Ask this document": a chat panel grounded in the document, with citations. Default: off. */
+  chat?: boolean;
+  /** Keeps each person's chat with each document (default: this browser). */
+  chatStore?: ChatStore;
+  /** Writing-check engines (`languageTool({ url })`, `llmChecker(complete)`, your own). Turns writing checks on. */
+  checker?: Checker | Checker[];
+  /** Plagiarism, AI-writing signal and your own corpus (see `OriginalityOptions`). Turns the Originality panel on. */
+  originality?: OriginalityOptions;
 }
 
 type Chip = [AiAction, string];
