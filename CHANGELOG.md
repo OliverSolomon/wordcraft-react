@@ -4,6 +4,55 @@ Every published version of `@gamine/wordcraft-react`, newest first. Versions fol
 
 Features marked ✦ are Extras: additions of this package that are not part of Microsoft Word or WordCraft. [docs/DIVERGENCES.md](docs/DIVERGENCES.md) lists every way the package differs from WordCraft.
 
+## 0.3.5 (2026-10-13)
+
+0.3.5 brings together what was planned as 0.3.5, 0.3.6 and 0.3.7.
+
+- **AI that builds structure** ✦ (`ai.structure`):
+  - **Real structure:** answers go in as headings, nested lists, links, quotes, code and native Word tables, never as model HTML.
+  - **An Insert menu and a `/` slash menu:** Table, Diagram, Chart, Timeline, Checklist, Callout, Equation, QR code, Image and Table of contents, plus Date, Divider, Page break, Signature line and your own actions (`ai.actions`).
+  - **One panel for each:** a prompt, a data source (the prompt, the selection, the document, a pasted CSV or `ai.pickData`), a preview and the insert modes. In Suggesting the result is a tracked change.
+  - **Tables from data:** values must come from the data, and anything else becomes `[to confirm]`. Beside the preview you can add or remove rows and columns, sort, apply number formats and add a totals row.
+  - **Diagrams:** Mermaid (`ai.mermaid`, loaded on first use), rendered strictly and themed with the palette, with alt text. The source is kept in the picture's title for **Edit diagram**, and a diagram that fails offers **Ask AI to fix**.
+  - **Native output:** charts are native Word charts and equations are Word equations. QR codes come from our own encoder.
+  - **Images:** from `ai.generateImage` or `ai.imageSearch`, previewed first.
+  - **Safety:** model output is validated, capped and sanitised; nothing runs and nothing is fetched.
+- **A theme from a logo or photo** ✦:
+  - **Finding colours:** five to eight swatches found in the browser, with roles, contrast warnings and a one-click fix, and a dark variant.
+  - **Saving:** palettes are saved with their source and passed to `ai.onPaletteCreated`.
+  - **Applying:** *Apply to document* writes the palette into the document theme (`theme1.xml`, so Design › Colors shows it), plus theme fonts. It recolours the title, headings, links, quotes and the AI's tables and callouts. *Apply to headings only* stays.
+- **Logo placement** ✦ (a `LogoSpec` on the letterhead):
+  - **Placements:** header left, centre or right; beside the text or above it; footer; a watermark behind the text (opacity, diagonal, repeat); a cover page; a side edge; at the cursor; a signature block.
+  - **Pages and partners:** every, first, odd or even pages, and a row of partner logos.
+  - **Preview and replacing:** a live mini page shows each preset, and applying again replaces rather than stacks.
+  - **Shorthand:** `ai.brand = { logo, palette }`, and `onLogoChanged` for your app.
+- **Ask this document** ✦ (`ai.chat`):
+  - **Grounded answers:** a side panel answers from the document's passages (the whole document, this section or the selection). It sends only the passages that match, and citation chips scroll to and highlight their source.
+  - **Actions:** Summarise, Key points, Action items, Explain this, Translate selection and Find where it says. Each answer can be inserted, used to replace the selection, copied or added as a comment.
+  - **Storage:** a chat store (`ai.chatStore`) keeps the conversation.
+- **Writing checks** ✦ (`checks` or `ai.checker`):
+  - **Underlines and the card:** underlines by category, and a card with fixes, Dismiss, Ignore this rule and Add to dictionary.
+  - **The panel:** a score, readability (Flesch), tone, and goals (audience, formality, domain including plain language, intent).
+  - **Engines:** `plainLanguageChecker()` runs in the browser, alongside `languageTool({ url })` and `llmChecker(complete)`. There is no Grammarly adapter because its SDK closed in January 2024.
+  - **When it runs:** checks run after a pause, are cached per paragraph, and never run in Viewing or on a sensitive document.
+- **Originality** ✦ (`originality`):
+  - **Sources:** your organisation's own documents (`corpus.search`), a plagiarism service (`checkPlagiarism`) and a soft AI-writing signal (`detectAi`) with its caveat.
+  - **Actions:** Go to, Add citation and Rewrite.
+  - **Safeguards:** the check is opt-in, results never go into the file and it never blocks anything.
+- **Tools** ✦ (`tools`): side panels for:
+  - an outline, with drag or Alt+Up and Alt+Down to move a section;
+  - accessibility, using WordCraft's checker with its fixes;
+  - sources and a bibliography;
+  - word count with a goal;
+  - voice typing;
+  - a translated copy of the document.
+
+  They open from **Tools** at the bottom right, or the phone layout's More menu.
+- **Sensitive documents:** `sensitive` turns off everything that would send text.
+- **API:** `editor.caret()` and `editor.selectedObject()`. Requests gain `history`, `goals`, `language` and `data`, and `ask`, `structure`, `check` and `translate` actions. `aiUserMessage` and `aiSystemPrompt` handle them all.
+- **Patch 0007:** custom theme colours for Design › Colors, and first-page and even-page headers and footers by command.
+- **Tests:** `smoke-extras.mjs` covers the acceptance cases (citations, checks, originality, theme, placement, tables, CSV data, diagrams, charts, the slash menu, permissions and sanitising). Unit tests cover blocks, QR codes, checks, contrast and prompts.
+
 ## 0.3.4 (2026-10-13)
 
 - **Upstream:** synced to WordCraft `159b84f`, 150 commits since `62b58d1` (WordCraft 0.6.0 and 0.6.1):

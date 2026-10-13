@@ -65,6 +65,17 @@ Rows marked ✦ are **Extras**: features that are not part of Microsoft Word or 
 | AI Studio ✦ | Not available | Writing skills (Humaniser on by default, custom skills, SKILL.md import), letterheads, brand palettes, model and key | Package |
 | AI providers ✦ | Not available | Your endpoint, or people's own OpenRouter, OpenAI, Anthropic, Gemini or OpenAI-compatible key | Package |
 | AI ribbon button | Not available | Optional sparkle beside Comments (`ai.ribbonButton`) | Patch 0004 |
+| AI that builds structure ✦ | AI answers are plain text | Answers become headings, lists and native tables; an Insert menu and a `/` slash menu make tables (from data, values checked), Mermaid diagrams (source kept in the picture's title, Edit diagram), native Word charts, checklists, callouts, equations, QR codes, images and tables of contents; tracked in Suggesting (`ai.structure`) | Package |
+| Document theme colours | Built-in colour sets only (Design › Colors) | Custom theme colours written to `theme1.xml` (`design.themeColors` with `colors`), so a palette from a logo becomes the document theme | Patch 0007, Package |
+| Palette from a logo or photo ✦ | Not available | Colours found in the browser (Lab k-means, round-robin across pictures), roles, contrast warnings with a fix, dark variant, saved palettes (`onPaletteCreated`) | Package |
+| First-page and even-page headers | Edited from the header itself | Also by command (`insert.editHeader` and `insert.editFooter` with `kind`) | Patch 0007 |
+| Logo placement ✦ | Not available | Header, footer, beside the text, watermark behind the text, cover page, side edge, cursor, signature, partner logos; first, odd or even pages (`LogoSpec`) | Package |
+| Document chat ✦ | Not available | "Ask this document": answers from the document's passages with citation chips, quick actions, Insert, Replace, Copy, Add as comment, a chat store (`ai.chat`) | Package |
+| Writing checks ✦ | Spelling and grammar (the Editor pane) | Also underlines by category with fixes, goals, a score, readability and tone, through pluggable engines: plain-language rules in the browser, LanguageTool, the AI (`checks`) | Package |
+| Originality ✦ | Not available | Similarity against the organisation's documents, a plagiarism service and a soft AI-writing signal, opt-in and never saved in the file (`originality`) | Package |
+| Side tools ✦ | Navigation pane, Check Accessibility, Manage Sources, Word Count, Dictate (a gap) | The same engine features as side panels for the web, plus a word goal, voice typing and a translated copy (`tools`) | Package |
+| Sensitive documents | Not a concept | `sensitive` turns off every Extra that sends text (checks, originality, chat) | Package |
+| Selection API | Not exposed | `editor.caret()` and `editor.selectedObject()` (read only) | Package |
 
 ## Access, comments and presence
 

@@ -499,7 +499,7 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
     ? [
         ...STRUCTURE_ITEMS.map((i) => ({ id: i.kind, label: i.label, icon: i.icon, hint: i.hint })),
         { id: 'quick:date', label: 'Date', icon: '📅', hint: 'Today’s date' },
-        { id: 'quick:rule', label: 'Divider', icon: '—', hint: 'A horizontal line' },
+        { id: 'quick:rule', label: 'Divider', icon: '═', hint: 'A horizontal line' },
         { id: 'quick:pageBreak', label: 'Page break', icon: '⤓', hint: 'Start a new page' },
         { id: 'quick:signature', label: 'Signature line', icon: '✍', hint: 'A line to sign on' },
         ...(ai?.actions ?? []).map((a) => ({ id: `action:${a.id}`, label: a.label, icon: a.icon ?? '✦' })),
