@@ -610,9 +610,11 @@ export function SlashMenu({ editor, container, items, onPick, dark }: { editor: 
   const [active, setActive] = useState(0);
   const openRef = useRef(open);
   openRef.current = open;
-  const shown = items.filter((i) => !filter || i.label.toLowerCase().includes(filter.toLowerCase()) || i.id.includes(filter.toLowerCase()));
-  const shownRef = useRef(shown);
-  shownRef.current = shown;
+  const matching = (f: string) => items.filter((i) => !f || i.label.toLowerCase().includes(f.toLowerCase()) || i.id.includes(f.toLowerCase()));
+  const shown = matching(filter);
+  // The filter as typed, kept from the keys themselves: the editor draws them a frame or more later,
+  // and Enter right after typing must pick from the filtered list.
+  const typed = useRef('');
   const activeRef = useRef(active);
   activeRef.current = active;
 
@@ -623,7 +625,10 @@ export function SlashMenu({ editor, container, items, onPick, dark }: { editor: 
       if (!at || (c?.anchor && (c.anchor.offset !== at.offset || c.anchor.path.join() !== at.path.join()))) return setOpen(null);
       const p = editor.paragraphs().find((q) => q.path.join() === at.path.join());
       if (!p || !p.text.startsWith('/') || at.offset < 1 || /\s/.test(p.text.slice(0, at.offset)) || p.text.length > 24) return setOpen(null);
-      setFilter(p.text.slice(1, at.offset));
+      const f = p.text.slice(1, at.offset);
+      // The document catches up with the keys: trust it once it has at least what was typed.
+      if (f.length >= typed.current.length) typed.current = f;
+      setFilter(typed.current);
       if (!openRef.current) {
         const info = editor.selectionInfo();
         const r = info?.rect;
@@ -640,20 +645,37 @@ export function SlashMenu({ editor, container, items, onPick, dark }: { editor: 
     const o = openRef.current;
     setOpen(null);
     if (!o) return;
-    const p = editor.paragraphs().find((q) => q.path.join() === o.path.join());
-    if (p && p.text.startsWith('/')) {
-      editor.selectText(o.path, 0, p.text.length);
-      editor.execute('text.delete');
-    }
-    onPick(id);
+    // Wait (briefly) for the editor to have drawn every typed key, so none is left behind.
+    const want = `/${typed.current}`;
+    const started = Date.now();
+    const go = () => {
+      const p = editor.paragraphs().find((q) => q.path.join() === o.path.join());
+      if (p && p.text !== want && Date.now() - started < 1200) return void window.setTimeout(go, 50);
+      if (p && p.text.startsWith('/')) {
+        editor.selectText(o.path, 0, p.text.length);
+        editor.execute('text.delete');
+      }
+      onPick(id);
+    };
+    go();
   };
 
   useEffect(() => {
     if (!container) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.target !== editor.canvas && !container.contains(e.target as Node)) return;
+      if (e.key === '/' && !openRef.current) typed.current = '';
       if (openRef.current) {
-        const list = shownRef.current;
+        if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          typed.current += e.key;
+          setFilter(typed.current);
+          setActive(0);
+          activeRef.current = 0;
+        } else if (e.key === 'Backspace') {
+          typed.current = typed.current.slice(0, -1);
+          setFilter(typed.current);
+        }
+        const list = matching(typed.current);
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           e.preventDefault();
           e.stopPropagation();
@@ -676,7 +698,8 @@ export function SlashMenu({ editor, container, items, onPick, dark }: { editor: 
           return;
         }
       }
-      if (e.key === '/' || openRef.current) window.setTimeout(check, 40);
+      // The editor inserts the key on its next frame, which can be slow: look a few times.
+      if (e.key === '/' || openRef.current) for (const ms of [40, 160, 400, 900]) window.setTimeout(check, ms);
     };
     container.addEventListener('keydown', onKey, true);
     return () => container.removeEventListener('keydown', onKey, true);

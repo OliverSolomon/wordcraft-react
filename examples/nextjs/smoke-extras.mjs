@@ -249,7 +249,7 @@ const openInsert = async (page, label) => {
   await page.evaluate(() => window.wordcraft.canvas.focus());
   await page.getByRole('button', { name: /Write with/ }).first().click();
   await page.getByRole('button', { name: /^Insert/ }).first().click();
-  await page.getByRole('menuitem', { name: new RegExp(label) }).click();
+  await page.getByRole('menuitem', { name: label, exact: true }).click();
 };
 
 await scenario('table-native-shaded', '', async (page) => {
@@ -299,10 +299,16 @@ await scenario('diagram', '', async (page) => {
   assert.match(doc, /title="mermaid:flowchart TD/, 'the Mermaid source is kept with the picture');
   // Edit diagram: select the picture, the chip reopens the source.
   await page.evaluate(() => {
+    // Select the diagram as Shift+Right would, from the start of the paragraph that holds it.
     const ed = window.wordcraft;
-    const p = ed.paragraphs().filter((x) => x.text.includes('￼')).pop();
-    ed.selectText(p.path, p.text.indexOf('￼'), p.text.indexOf('￼') + 1);
+    const ps = ed.paragraphs();
+    for (let i = ps.length - 1; i >= 0; i--) {
+      ed.selectText(ps[i].path, 0, 0);
+      ed.execute('caret.right', { extend: true });
+      if (ed.selectedObject()?.title?.startsWith('mermaid:')) break;
+    }
   });
+  assert.match((await page.evaluate(() => window.wordcraft.selectedObject()))?.title ?? '', /^mermaid:/, 'the picture carries its source');
   await page.getByRole('button', { name: 'Edit diagram' }).waitFor({ timeout: 5000 });
   await page.getByRole('button', { name: 'Edit diagram' }).click();
   await page.getByRole('textbox', { name: 'Mermaid source' }).waitFor();
@@ -339,7 +345,9 @@ await scenario('slash-menu', '', async (page) => {
   await page.waitForTimeout(500);
   const t = await page.evaluate(() => window.wordcraft.paragraphs().slice(-3).map((p) => p.text));
   assert.ok(!t.some((x) => x.includes('/div')), 'the slash text is removed');
-  assert.match(await docxPart(page, 'word/document.xml'), /<w:pBdr><w:bottom/, 'a divider was inserted');
+  await page.waitForTimeout(500);
+  assert.match(await page.evaluate(() => new TextDecoder().decode(window.wordcraft.export('html'))), /<hr>/, 'a divider was inserted');
+  assert.match(await docxPart(page, 'word/document.xml'), /<w:bottom w:val="single"/, 'the divider is a paragraph border in the .docx');
 });
 
 await scenario('viewer-sees-no-structure', '&permission=view', async (page) => {

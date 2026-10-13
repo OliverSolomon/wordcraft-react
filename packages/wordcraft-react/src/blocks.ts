@@ -488,8 +488,6 @@ export function blockHtml(b: Block, palette: Palette): string | null {
     }
     case 'code':
       return `<pre>${esc(b.text)}</pre>`;
-    case 'rule':
-      return '<hr>';
     case 'signature':
       return `<p></p><p>______________________________</p>${b.name ? `<p><b>${esc(b.name)}</b></p>` : ''}${b.title ? `<p>${esc(b.title)}</p>` : ''}`;
     case 'date':
@@ -553,6 +551,12 @@ async function insertNative(editor: WordcraftEditor, b: Block, ctx: InsertContex
   switch (b.type) {
     case 'pageBreak':
       editor.execute('insert.pageBreak');
+      return;
+    case 'rule':
+      // Home › Borders › Horizontal Line on this paragraph, then a fresh paragraph without it.
+      editor.execute('insert.horizontalLine');
+      editor.execute('text.newParagraph');
+      editor.execute('para.borders', { kind: 'none' });
       return;
     case 'toc':
       editor.execute('references.toc', {});
@@ -618,13 +622,12 @@ async function insertNative(editor: WordcraftEditor, b: Block, ctx: InsertContex
 /** Pictures made from a Mermaid diagram carry this prefix and the source in their title. */
 export const DIAGRAM_TITLE = 'mermaid:';
 
-/** A new object is left selected: put the caret after it so the next Enter doesn't replace it. */
+/**
+ * `insert.picture` and `insert.chart` leave the new object selected; Right collapses the selection
+ * to its end, so the next Enter doesn't replace the object.
+ */
 export function collapse(editor: WordcraftEditor): void {
-  if (editor.getSelectedText()) editor.execute('caret.right');
-  else {
-    const c = editor.caret();
-    if (c?.anchor && c.focus && (c.anchor.offset !== c.focus.offset || c.anchor.path.join() !== c.focus.path.join())) editor.execute('caret.right');
-  }
+  editor.execute('caret.right');
 }
 
 /** Alt text for a chart: its kind, title and what it plots. */

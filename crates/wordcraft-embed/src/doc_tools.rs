@@ -49,7 +49,13 @@ impl PlainMap {
         let mut k = 0;
         for (byte, c) in p.text.char_indices() {
             if c == OBJ {
-                let shown = p.objects.get(k).map(InlineObject::plain_text).unwrap_or("");
+                // A picture, chart or shape is one U+FFFC, so the place before it can be selected;
+                // a field or an equation shows its text; anything else (comment anchors) is empty.
+                let shown = match p.objects.get(k) {
+                    Some(o) if o.is_drawing() => "\u{FFFC}",
+                    Some(o) => o.plain_text(),
+                    None => "",
+                };
                 for u in shown.chars() {
                     text.push(u);
                     offsets.extend(std::iter::repeat_n(byte, u.len_utf16()));
@@ -277,6 +283,26 @@ mod tests {
         let mut d = Document::from_text(&paras.join("\n"));
         d.body.truncate(paras.len());
         d
+    }
+
+    #[test]
+    fn a_picture_is_one_character_and_can_be_selected() {
+        let mut s = wordcraft_engine::Session::new(doc(&["ab"]));
+        s.run("select.range", &json!({"anchor": Pos::new(StoryRef::Body, Path(vec![0]), 1), "focus": Pos::new(StoryRef::Body, Path(vec![0]), 1)}))
+            .unwrap();
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        s.run("insert.picture", &json!({"data": png, "alt": "dot"})).unwrap();
+        s.run("object.altText", &json!({"title": "mermaid:graph TD"})).unwrap();
+        let list = paragraphs_json(&s.doc);
+        assert_eq!(list[0]["text"], "a\u{FFFC}b");
+        // UTF-16 1..2 is the picture: selecting it finds it, with its title.
+        let a = pos_at(&s.doc, &[0], 1).unwrap();
+        let b = pos_at(&s.doc, &[0], 2).unwrap();
+        let o = selected_object(&s.doc, &a, &b);
+        assert_eq!(o["kind"], "picture");
+        assert_eq!(o["title"], "mermaid:graph TD");
+        assert_eq!(body_offset(&s.doc, &b)["offset"], 2);
+        assert!(selected_object(&s.doc, &pos_at(&s.doc, &[0], 0).unwrap(), &a).is_null());
     }
 
     #[test]

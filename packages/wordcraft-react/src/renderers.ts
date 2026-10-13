@@ -88,11 +88,17 @@ function tint(hex: string, k: number): string {
 
 /** Rasterise an SVG to PNG (base64, no prefix), at `scale` times its size, on white. */
 export async function svgToPng(svg: string, scale = 2, maxWidth = 1600): Promise<{ png: string; width: number; height: number }> {
-  const sized = svg.match(/<svg[^>]*\swidth="([\d.]+)(px)?"[^>]*\sheight="([\d.]+)(px)?"/);
-  const vb = svg.match(/viewBox="[\d.\s-]+?\s([\d.]+)\s([\d.]+)"/);
-  let w = sized ? parseFloat(sized[1]) : vb ? parseFloat(vb[1]) : 600;
-  let h = sized ? parseFloat(sized[3]) : vb ? parseFloat(vb[2]) : 400;
-  if (!sized) svg = svg.replace('<svg', `<svg width="${w}" height="${h}"`);
+  // The root's own width and height may be relative ("100%", as Mermaid writes); size it from the
+  // viewBox instead, and write exactly one width and height.
+  const root = svg.match(/<svg\b[^>]*>/)?.[0] ?? '<svg>';
+  const vb = root.match(/viewBox="\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)\s*"/);
+  const wAttr = root.match(/\swidth="([\d.]+)(px)?"/);
+  const hAttr = root.match(/\sheight="([\d.]+)(px)?"/);
+  const w = vb ? parseFloat(vb[1]) : wAttr ? parseFloat(wAttr[1]) : 600;
+  const h = vb ? parseFloat(vb[2]) : hAttr ? parseFloat(hAttr[1]) : 400;
+  let fixed = root.replace(/\s(width|height)="[^"]*"/g, '').replace(/^<svg/, `<svg width="${w}" height="${h}"`);
+  if (!/\sxmlns="/.test(fixed)) fixed = fixed.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
+  svg = svg.replace(root, fixed);
   const k = Math.min(scale, maxWidth / Math.max(w, 1));
   const img = new Image();
   img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
