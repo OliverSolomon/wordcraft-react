@@ -124,14 +124,8 @@ const TEMPLATES: Array<{ label: string; prompt: string }> = [
 ];
 const LETTERHEAD_FONTS = ['Aptos', 'Georgia', 'Playfair Display', 'Montserrat', 'Lato', 'Merriweather', 'Inter', 'Cormorant Garamond', 'Poppins', 'Libre Baskerville'];
 
-/** Put plain text into the document at the caret (replacing a selection), paragraph by paragraph. */
-export function insertText(editor: WordcraftEditor, text: string): void {
-  const paras = text.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').split(/\n\n|\n/);
-  paras.forEach((p, i) => {
-    if (i > 0) editor.execute('text.newParagraph');
-    if (p) editor.execute('text.insert', { text: p });
-  });
-}
+import { insertText } from './insert-text.js';
+export { insertText };
 
 const Icon = ({ d, size = 20 }: { d: string; size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" className="wcai-icon">
