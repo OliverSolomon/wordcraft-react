@@ -4,6 +4,25 @@ Every published version of `@gamine/wordcraft-react`, newest first. Versions fol
 
 Features marked ✦ are Extras: additions of this package that are not part of Microsoft Word or WordCraft. [docs/DIVERGENCES.md](docs/DIVERGENCES.md) lists every way the package differs from WordCraft.
 
+## 0.3.4 (2026-10-13)
+
+- **Upstream:** synced to WordCraft `159b84f`, 150 commits since `62b58d1` (WordCraft 0.6.0 and 0.6.1):
+  - **Tables:** mouse selection, insertion and moving, border and corner drags, double-click AutoFit, whole-cell selection, a table context menu, and ruler markers.
+  - **Layout:** Word-like kerning and paragraph spacing.
+  - **Reading and editing:** a paginated Reading Mode, Hide White Space, an Undo history list, a selection bar, Word's caret, and Ctrl+F in the Navigation pane.
+  - **Languages:** French, German, Italian, Czech, Bulgarian and Polish interfaces, with more proofing languages.
+  - **Files:** better .doc and RTF import, and metafile pictures.
+  - **Fonts:** Add Font.
+  - **Fixes:** many layout and file fixes.
+- **Letterhead, plug and play:** `ai.letterhead` is the organisation's letterhead, read on every render, so one that loads after the editor shows at once and a changed one replaces it. A person's own edits are a separate override, saved only with a name and started from the letterhead shown, with *Reset to organisation letterhead*. New `ai.letterheadLocked` and `ai.onLetterheadApplied`. Applying twice replaces rather than stacks.
+- **Access levels:** `permission` (`view`, `comment`, `suggest`, `edit`), enforced by the editor through Restrict Editing and the mode, changeable live with a notice when it goes down, and an access chip. `allowCopy` and `commentsVisibleToViewers` refine it; AI answers can be copied but not inserted below Suggest.
+- **Comments** ✦: a Google Docs style panel with filters, @mentions and a people picker, Assign to, Resolve and Reopen, edit and delete, and a store adapter (`create`, `reply`, `update`, `resolve`, `remove`, `subscribe`) with `onMention` for notifications. Threads and resolved state survive a .docx round trip.
+- **Presence** ✦: avatars at the bottom right with idle state, a `+n` counter and following (`editor.followPeer`), anonymous names for people without one, and `onPresenceChange` and `<PresenceAvatars>` for your own header.
+- **API:** `editor.paragraphs()`, `editor.comments()`, `editor.selectText()`, `editor.setMarks()` and `editor.followPeer()`.
+- **Web Layout** follows the window width, as in Word.
+- **Docs site** in the shadcn/ui manner, with Access levels and Comments pages.
+- **Tests:** `smoke-features.mjs` covers the letterhead, access levels, comments and marks, and the co-editing test now covers presence, following and shared comments.
+
 ## 0.3.3 (2026-10-12)
 
 - **Phones and tablets** ✦: on a touch screen narrower than 600px the editor takes the shape of Word for Android (`mobile`, `'auto'` by default). A slim title bar (Undo, Redo, Mobile View, the palette, More) sits over the page, with a command palette at the bottom: a quick bar above the keyboard, and Home, Insert, Draw, Layout, Review and View tabs with Table, Picture and Shape when the selection calls for them. Fonts, colours, styles, margins, sizes, tables, shapes, links and comments open as pages inside the palette. It switches live as a phone turns or a foldable opens.

@@ -109,6 +109,12 @@ impl CollabState {
     }
 
     /// Title bar avatars for the people here.
+    /// Where the person called `name` has their caret (to follow them).
+    pub fn peer_head(&self, name: &str) -> Option<Pos> {
+        let peer = self.peers.iter().find(|p| p.name == name)?;
+        self.c.resolve(peer.head.as_deref()?)
+    }
+
     pub fn collaborators(&self) -> Vec<Collaborator> {
         self.peers.iter().map(|p| Collaborator { name: p.name.clone(), color: p.color }).collect()
     }

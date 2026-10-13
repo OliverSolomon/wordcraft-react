@@ -57,6 +57,9 @@ A complete example app lives in [`examples/nextjs`](examples/nextjs). The docume
 | `versionHistory` ✦ Extra | `boolean` or `{ store?, documentId?, interval?, max? }` | Version history like Google Docs: versions recorded as people work, in a panel to view, restore, name, download or delete. Opens from the title bar, File › Info and Ctrl+Alt+Shift+H. See [Version history](#version-history-extra). |
 | `versionsOpen`, `onVersionsOpenChange` | | Open or close the version history panel yourself. |
 | `mobile` ✦ Extra | `'auto' \| boolean` | The phone layout, shaped like Word on Android. `'auto'` (default) uses it on touch screens narrower than 600px and switches live, so a foldable gets the phone layout folded and the ribbon unfolded. See [Phones and tablets](#phones-and-tablets). |
+| `permission` | `'view' \| 'comment' \| 'suggest' \| 'edit'` | What this person may do, enforced by the editor and changeable at runtime. See [Access levels](#access-levels). `allowCopy` and `commentsVisibleToViewers` refine it. |
+| `comments` ✦ Extra | `CommentsOptions` or `true` | Google Docs style comments: a panel with filters, replies, `@mentions`, Assign to, and a store adapter. See [Comments](#comments). `commentsOpen` and `onCommentsOpenChange` control the panel. |
+| `presence` | `boolean` | Show who else is here (avatars with follow) at the bottom right while co-editing. Default true. |
 | `mobileOptions` | `MobileOptions` | `{ mobileView?, title?, onBack?, onShare?, camera?, dictation?, shyChrome? }` for the phone layout. |
 | `collaboration` | | Real-time co-editing, e.g. `yjsCollaboration({ doc, provider })`. See [Co-editing](#co-editing). |
 | `dark`, `prefs` | | UI preferences, applied live: ribbon `tab`, `dark`, `darkPage`, `language`, `showDiscord`. |
@@ -95,6 +98,11 @@ editor.restoreContent(versionBytes);   // replace the content with another versi
 editor.selectionInfo();           // { collapsed, rect, contextual, touch, selected, scrolling, ... } in CSS pixels
 editor.onSelection((info) => {}); // as the selection changes or moves; returns a function that stops listening
 editor.setTouch(false);           // turn the page's touch gestures off (on by default)
+editor.paragraphs();              // [{ path, text, style, styleName, heading }], tables included
+editor.comments();                // [{ id, parent, author, date, resolved, text, quote, anchor }]
+editor.selectText([3], 0, 12);    // select by paragraph path and UTF-16 offsets, and scroll to it
+editor.setMarks([{ id, path, start, end, color, style: 'squiggle' }]);  // underline or highlight text
+editor.followPeer('Ada Lovelace'); // keep a co-editor's caret in view (null stops)
 editor.destroy();
 ```
 
@@ -107,7 +115,7 @@ Several people can edit one document at once, the way Word's co-authoring works:
 - **Merging.** Changes merge as people type, down to the character. Two people typing in the same paragraph both keep their words. Formatting merges property by property, so one person's bold and another's italics on the same word both stick.
 - **Structure.** Paragraph splits, tables, headers, footers, notes, comments, pictures and document settings are all shared.
 - **Undo.** Ctrl+Z and the Undo button take back only your own changes, not other people's.
-- **Presence.** Everyone else's cursor and selection show on the page in their colour with a name flag, and their avatars appear in the title bar.
+- **Presence.** Everyone else's cursor and selection show on the page in their colour with a name flag, and their avatars appear in the title bar and at the bottom right, overlapping with a `+n` counter. An avatar's tooltip says whether they are editing or viewing; after a minute without activity it dims. Click one to follow that person (their caret stays in view until you scroll yourself). Someone who joins without a name shows as "Anonymous" and an animal.
 - **Saving.** AutoSave writes the merged document over the one shared file, so nobody's save overwrites anyone else's work. Turn on `versionHistory` with a server store to keep earlier versions everyone can see.
 
 It runs on [Yjs](https://yjs.dev), so any Yjs provider can carry it: y-websocket, Hocuspocus, Liveblocks, PartyKit, y-webrtc, or your own. Install `yjs` and a provider, then:
@@ -138,7 +146,43 @@ export function SharedEditor({ docId, me }: { docId: string; me: { name: string;
 }
 ```
 
+For your own header, `yjsCollaboration({ ..., onPresenceChange: (users) => ... })` reports everyone as `{ name, color, avatarUrl, state, idle, self, anonymous }`, and `<PresenceAvatars users={users} onFollow={(name) => editor.followPeer(name)} />` draws them the same way. Pass `user.avatarUrl` for pictures; `presence={false}` hides the bottom-right row.
+
 The first person to open a document shares whatever the editor has open (pass the stored file as `document`). Everyone who joins later gets the live shared document instead. `yjsCollaboration` waits for the provider's first sync before joining, so a document is never put in twice. [`examples/nextjs/app/collab`](examples/nextjs/app/collab) is a complete page with a shared-file API that keeps the last 20 versions. Run `npm run collab-server` next to `npm run dev` and open `/collab` in two windows to try it.
+
+## Access levels
+
+`permission` sets what a person may do, as Google Docs' link access does: `'view'`, `'comment'`, `'suggest'` or `'edit'` (the default). The editor enforces it, not only your buttons: typing, paste, drag and drop, AutoCorrect, find and replace and AI results all go through the same commands, and the commands refuse.
+
+| Level | Can | Cannot |
+|---|---|---|
+| `view` | Read, select, copy, print, export | Change anything; comments are read only (`commentsVisibleToViewers={false}` hides them) |
+| `comment` | Everything a viewer can, plus add, reply to and resolve comments | Change the text |
+| `suggest` | Edit, but every change is a tracked suggestion (the mode switch is locked to Reviewing) | Accept or reject changes, turn tracking off |
+| `edit` | Everything | |
+
+Change the prop at runtime and it applies at once; when it goes down, the person sees a short notice saying why. A chip at the bottom right says "Viewing", "Commenting" or "Suggesting". `allowCopy={false}` also stops viewers and commenters copying, printing and downloading. Underneath it uses WordCraft's Restrict Editing, so a saved .docx carries the same protection into Word.
+
+## Comments
+
+WordCraft keeps comments in the document, Word style: a highlighted range with a card in the margin, threads, resolve, and a round trip through `word/comments.xml` and `commentsExtended.xml`, so threads, authors and resolved state survive Word and Google Docs. `comments` adds what a web app needs around them:
+
+```tsx
+<WordcraftEditor
+  comments={{
+    people: team,                                  // offered after @ (or a search function)
+    store: { create, reply, update, resolve, remove, subscribe },   // every change, for your server
+    onMention: ({ comment, people, assignee }) => notify(people, comment),
+  }}
+/>
+```
+
+- **The panel.** A comments button at the bottom right opens every thread, with filters for Open, Resolved, Mine and Mentions me, and by author. Click a quote to go to its text. Add a comment on the selection, reply, `@mention` with a people picker, *Assign to* the first person mentioned, Resolve and Reopen, and edit or delete your own. New comments are announced to screen readers, and on a phone the panel is a sheet over the page.
+- **The store.** Every method is optional and may return a promise; a failing store never stops anyone commenting. `subscribe(listener)` applies comments made elsewhere (an email reply, another app) to the open document. With co-editing, other people's comments arrive by themselves.
+- **Shortcuts and menus.** WordCraft's own New Comment (Review tab, right-click menu, mini toolbar, Ctrl+Alt+M) and margin cards work as before, and the store hears those comments too.
+- **Suggestions.** The `suggest` level (or Word's Reviewing mode) records edits as tracked changes with their author; accept and reject them from the Review tab.
+
+`editor.comments()` lists the comments with their anchors, and `editor.selectText(path, start, end)` goes to one. `commentsOpen` and `onCommentsOpenChange` control the panel.
 
 ## Fonts
 
@@ -175,6 +219,7 @@ Everything in this package matches Word and WordCraft, except features marked **
 - ✦ **Real-time co-editing** with per-person undo and live cursors ([Co-editing](#co-editing)). Word has this; WordCraft does not yet.
 - ✦ **Fonts on demand** from the Google Fonts library ([Fonts](#fonts)).
 - ✦ **Version history** in the style of Google Docs ([Version history](#version-history-extra)). Word has version history for files in OneDrive; WordCraft has none.
+- ✦ **Comments panel, mentions and a comment store** ([Comments](#comments)), as in Google Docs. The comments themselves are WordCraft's, Word style.
 - ✦ **The phone layout and touch gestures** ([Phones and tablets](#phones-and-tablets)), with dictation and camera photos. Word has these in its phone app; WordCraft is desktop and browser only.
 
 The full list of differences from WordCraft, Extras or not, is in [docs/DIVERGENCES.md](docs/DIVERGENCES.md).
@@ -192,7 +237,7 @@ The full list of differences from WordCraft, Extras or not, is in [docs/DIVERGEN
 The sliders button in the prompt box opens AI Studio. Its settings stay in the person's browser.
 
 - **Skills:** writing instructions added to every request. The **Humaniser** is on by default. It asks for natural, human-sounding prose with varied rhythm, plain words, no stock AI phrases and no em dashes. Built-in skills also include Plain English, Concise, Persuasive, Academic, Warm & friendly and British English. People can write their own skill or import a `SKILL.md` (front matter `name` and `description`, then the instructions). Your app can add skills with `ai.skills` and choose which are on with `ai.defaultSkills`.
-- **Letterhead:** organisation name, tagline, address, contact line, logo, font, alignment and an accent rule, with a live preview. *Apply to document* writes it into the document header. The AI also gets these details as context for letters and emails. Your app can supply a starting letterhead with `ai.letterhead`.
+- **Letterhead:** organisation name, tagline, address, contact line, logo, font, alignment and an accent rule, with a live preview. *Apply to document* writes it into the document header. The AI also gets these details as context for letters and emails. Your app supplies the organisation's letterhead with `ai.letterhead`; it is read live, so one that loads after the editor shows at once and a changed one replaces it. A person's own edits are kept separately in their browser (only once they have a name), with *Reset to organisation letterhead* to go back. `ai.letterheadLocked: true` keeps the official letterhead untouched (read-only fields, only Apply and Remove), and `ai.onLetterheadApplied(letterhead)` tells your app when it was applied, to log it or save the document.
 - **Palette:** eight brand palettes and a custom one. *Apply to headings* recolours the title and Heading 1 to 3, and the letterhead uses the same colours. Your app can add palettes with `ai.palettes`.
 - **Model:** the provider, API key, model and endpoint (see below).
 
@@ -270,7 +315,7 @@ The `/core` entry point has no React dependency, and importing it on the server 
 - **Rendering.** WordCraft draws onto a `<canvas>` with its own UI toolkit (egui), which is why it can match Word's interface pixel for pixel. The flip side is that host CSS can't style what's inside the editor. Use `prefs` (dark mode, language, ribbon) and commands instead.
 - **Keyboard.** As with any embedded app, shortcuts go to the editor once it has focus.
 - **Persistence.** The editor keeps the document out of browser storage. Your app owns it, and both AutoSave and Save go through `onSave`; you can also call `export()` whenever you like. The browser keeps only small conveniences (recently used fonts, AI Studio settings, a key someone added) and, with the default store, version history.
-- **Patches on upstream.** The package applies six small patches to WordCraft, listed in [`patches/`](patches). They cover AutoSave on the web, hiding the title bar and ribbon, the co-editing hooks, host controls (tabs, modes, turned-off commands, fonts), the AI button with Word's ribbon collapse, Windows-style inline tools, rulers, font previews and Version History's entry points, and hiding the status bar for the phone layout. The touch gestures live in this package's own code, not in a patch. They're written so they can be offered upstream. [docs/DIVERGENCES.md](docs/DIVERGENCES.md) lists every resulting difference from WordCraft.
+- **Patches on upstream.** The package applies six small patches to WordCraft, listed in [`patches/`](patches). They cover AutoSave on the web, hiding the title bar and ribbon, the co-editing hooks, host controls (tabs, modes, turned-off commands, fonts), the AI button with Word's ribbon collapse, Windows-style inline tools, rulers, font previews and Version History's entry points, and hiding the status bar for the phone layout. Access levels use WordCraft's own Restrict Editing. The touch gestures live in this package's own code, not in a patch. They're written so they can be offered upstream. [docs/DIVERGENCES.md](docs/DIVERGENCES.md) lists every resulting difference from WordCraft.
 - **How close to Word.** See [docs/WORD-PARITY.md](docs/WORD-PARITY.md).
 - **Versions.** Each release bumps the patch number until a version is declared stable ([docs/VERSIONING.md](docs/VERSIONING.md)); [CHANGELOG.md](CHANGELOG.md) says what each one changed.
 

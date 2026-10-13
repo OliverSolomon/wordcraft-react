@@ -77,6 +77,26 @@ export interface WordcraftUser {
   color?: string;
   /** A stable id for this person (collaboration); defaults to the name. */
   id?: string;
+  /** Their picture, for presence avatars. */
+  avatarUrl?: string;
+}
+
+/** Someone in the document right now (co-editing presence). */
+export interface PresenceUser {
+  /** The awareness client id. */
+  clientId: number;
+  id: string | null;
+  name: string;
+  color: string;
+  avatarUrl: string | null;
+  /** What they are doing: editing (or suggesting) or only viewing. */
+  state: 'editing' | 'viewing';
+  /** No activity for a minute. */
+  idle: boolean;
+  /** This browser's own entry. */
+  self: boolean;
+  /** Joined without a name ("Anonymous Otter"). */
+  anonymous: boolean;
 }
 
 /** A selection as base64 Yjs relative positions (shared through awareness). */
@@ -123,6 +143,8 @@ export interface CollabPort {
  */
 export interface Collaboration {
   attach(editor: WordcraftEditor): () => void;
+  /** Listen for who is in the document (avatars in your header). Returns a function that stops. */
+  onPresence?(cb: (users: PresenceUser[]) => void): () => void;
 }
 
 /** Word's Ribbon Display Options. */
@@ -172,6 +194,10 @@ export interface SelectionInfo {
   page: EditorRect | null;
   /** Contextual tabs for the selection: `Table Design`, `Table Layout`, `Picture Format`, `Shape Format`, `SmartArt Design`, `Chart Design`, `Equation`, `Outlining`. */
   contextual: string[];
+  /** Ids of the marks (`setMarks`) the caret is in. */
+  marks: string[];
+  /** The collaborator being followed (`followPeer`), or null. */
+  following: string | null;
   /** The selection was made by touch (its handles show). */
   touch: boolean;
   /** A touch selection gesture just finished: a phone shows its floating toolbar now. */
@@ -184,6 +210,46 @@ export interface SelectionInfo {
 
 /** The editor reports the selection in egui points, with the editor's size in points beside it. */
 type RawSelectionInfo = SelectionInfo & { screen?: EditorRect | null };
+
+/** A body paragraph (tables included), as the panels read the document. */
+export interface DocParagraph {
+  /** Where it is: `[block]` at the top level, `[table, row, cell, block]` inside a table. */
+  path: number[];
+  /** Its plain text. Offsets (`selectText`, marks, comment anchors) count UTF-16 units in it. */
+  text: string;
+  style: string;
+  styleName: string;
+  /** Outline level 1 to 9 for Title and Heading 1 to 9, else 0. */
+  heading: number;
+}
+
+/** A comment or a reply in the document. */
+export interface DocComment {
+  id: number;
+  /** The comment this replies to, or null for a thread's first comment. */
+  parent: number | null;
+  author: string;
+  initials: string;
+  /** ISO 8601. */
+  date: string;
+  resolved: boolean;
+  text: string;
+  /** The commented text (first 200 characters). */
+  quote: string;
+  /** Where the commented text is (first comments only). */
+  anchor: { path: number[]; start: number; end: number } | null;
+}
+
+/** A mark over the text: a squiggle (writing checks) or a highlight (originality). */
+export interface TextMark {
+  id: string;
+  path: number[];
+  start: number;
+  end: number;
+  /** `#rrggbb`. */
+  color?: string;
+  style?: 'squiggle' | 'highlight';
+}
 
 /** A command from WordCraft's registry (the same ids the ribbon, shortcuts and MCP use). */
 export interface CommandInfo {
@@ -328,6 +394,16 @@ export interface WordcraftEditor {
   selectionInfo(): SelectionInfo | null;
   /** Listen for selection changes (also as it moves on screen). Returns a function that stops listening. */
   onSelection(cb: (info: SelectionInfo) => void): () => void;
+  /** Every body paragraph, tables included, with its path and plain text. */
+  paragraphs(): DocParagraph[];
+  /** Every comment and reply, with its author, state, text and anchor. */
+  comments(): DocComment[];
+  /** Select `start..end` (UTF-16 offsets) of the paragraph at `path`, and scroll to it. */
+  selectText(path: number[], start: number, end: number): void;
+  /** Lay marks over the text (squiggles or highlights); an empty list clears them. */
+  setMarks(marks: TextMark[]): void;
+  /** Keep a collaborator's caret in view until the person scrolls, clicks or types (`null` stops). */
+  followPeer(name: string | null): void;
   /** Run any WordCraft command by id, e.g. `execute('format.bold')`, `execute('text.insert', { text: 'Hi' })`. */
   execute<T = unknown>(command: string, params?: Record<string, unknown>): T;
   /** Every command in WordCraft's registry. */
@@ -396,6 +472,11 @@ interface RawHandle {
   setTouch?(on: boolean): void;
   setOnSelection?(cb: ((info: RawSelectionInfo) => void) | null): void;
   selectionInfo?(): string;
+  paragraphs?(): string;
+  comments?(): string;
+  selectText?(path: string, start: number, end: number): void;
+  setMarks?(json: string): void;
+  followPeer?(name: string | null): void;
   collabStart(clientId: number, state: Uint8Array | null): boolean;
   collabApply(update: Uint8Array): void;
   collabState(): Uint8Array;
@@ -723,6 +804,26 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     setTouch(on) {
       alive();
       raw.setTouch?.(on);
+    },
+    paragraphs() {
+      alive();
+      return raw.paragraphs ? (JSON.parse(raw.paragraphs()) as DocParagraph[]) : [];
+    },
+    comments() {
+      alive();
+      return raw.comments ? (JSON.parse(raw.comments()) as DocComment[]) : [];
+    },
+    selectText(path, start, end) {
+      alive();
+      raw.selectText?.(JSON.stringify(path), Math.max(0, start), Math.max(0, end));
+    },
+    setMarks(marks) {
+      alive();
+      raw.setMarks?.(JSON.stringify(marks));
+    },
+    followPeer(name) {
+      alive();
+      raw.followPeer?.(name);
     },
     selectionInfo() {
       alive();

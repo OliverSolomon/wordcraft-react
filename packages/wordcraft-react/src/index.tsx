@@ -18,7 +18,11 @@ import type { VersionHistoryOptions } from './versions.js';
 import type { AiOptions } from './ai.js';
 import { MobileShell } from './mobile.js';
 import type { MobileOptions } from './mobile.js';
-import type { ChangeInfo, Collaboration, DocumentSource, EditorMode, FontSource, RibbonDisplay, RibbonTab, SavedFile, WordcraftEditor as Editor, WordcraftOptions, WordcraftPrefs, WordcraftUser } from './core.js';
+import { CommentsButton, CommentsPanel, openThreads, useCommentSync } from './comments.js';
+import type { CommentsOptions, Person } from './comments.js';
+import { AccessChip, Notice, PresenceAvatars, WorkspaceRow, applyPermission, canComment, canWrite, lowerPermission } from './workspace.js';
+import type { Permission } from './workspace.js';
+import type { ChangeInfo, Collaboration, DocumentSource, EditorMode, FontSource, PresenceUser, RibbonDisplay, RibbonTab, SavedFile, WordcraftEditor as Editor, WordcraftOptions, WordcraftPrefs, WordcraftUser } from './core.js';
 
 export * from './core.js';
 export { AiBar, AiStar, ExtraTag, aiReady, insertText, AI_PROVIDERS, completeWith } from './ai.js';
@@ -27,6 +31,10 @@ export { VersionHistory } from './history.js';
 export type { VersionHistoryHandle, VersionHistoryProps } from './history.js';
 export type { AiBarProps, AiOptions, AiProviderConfig, AiProviderId } from './ai.js';
 export { MOBILE_PALETTE, MobileShell } from './mobile.js';
+export { CommentsPanel, CommentsButton, useCommentSync, personColor } from './comments.js';
+export type { CommentEvent, CommentEventType, CommentStore, CommentsOptions, CommentsPanelProps, Person, StoredComment } from './comments.js';
+export { AccessChip, PERMISSION_LABEL, PresenceAvatars, applyPermission, canComment, canWrite } from './workspace.js';
+export type { Permission } from './workspace.js';
 export type { FormatState, MobileOptions, MobileShellProps, MobileTabId, PaletteItem, PaletteState, PaletteTab, ViewState } from './mobile.js';
 
 export interface WordcraftEditorProps {
@@ -69,6 +77,28 @@ export interface WordcraftEditorProps {
   hiddenTabs?: RibbonTab[];
   /** Word's mode switch: `editing` (default), `reviewing` (Track Changes) or `viewing` (read only). */
   mode?: EditorMode;
+  /**
+   * What this person may do, enforced by the editor (typing, paste, drag and drop, AI results,
+   * find and replace all obey it): `view` (read, select, copy), `comment` (view plus comments),
+   * `suggest` (every edit is a tracked suggestion), `edit` (default). Change it at runtime and it
+   * applies at once; lowering it tells the person.
+   */
+  permission?: Permission;
+  /** Viewers see the comments (read only). Default true. */
+  commentsVisibleToViewers?: boolean;
+  /** Viewers and commenters may copy, print and download. Default true. */
+  allowCopy?: boolean;
+  /**
+   * Comments in the Google Docs style: a panel of threads with filters, replies, `@mentions`,
+   * Assign to, Resolve and Reopen, and a store adapter for every change. `true` turns on the panel
+   * alone. The comments themselves live in the document (and in the .docx).
+   */
+  comments?: CommentsOptions | boolean;
+  /** Open or close the comments panel (controlled). */
+  commentsOpen?: boolean;
+  onCommentsOpenChange?: (open: boolean) => void;
+  /** Show who else is here (avatars with follow) at the bottom right while co-editing. Default true. */
+  presence?: boolean;
   /** Commands to turn off (ids, or prefixes ending in `*`). Changes apply live. */
   disabledCommands?: string[];
   /** Fonts offered on demand; default the Google Fonts library, `false` for built-in fonts only. Read once. */
@@ -289,16 +319,66 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
     return collaboration.attach(editor);
   }, [editor, collaboration]);
 
-  // Mode and turned-off commands follow their props.
-  useEffect(() => {
-    if (!editor || editor.destroyed || !props.mode || editor.getMode() === props.mode) return;
-    editor.setMode(props.mode);
-  }, [editor, props.mode]);
+  // Mode, access level and turned-off commands follow their props. The access level wins over
+  // the mode: a viewer stays in Viewing, a suggester in Reviewing.
+  const permission: Permission = props.permission ?? 'edit';
   const disabledKey = JSON.stringify(props.disabledCommands ?? []);
+  const [notice, setNotice] = useState('');
+  const lastPermission = useRef<Permission | null>(null);
   useEffect(() => {
     if (!editor || editor.destroyed) return;
-    editor.setDisabledCommands(JSON.parse(disabledKey) as string[]);
-  }, [editor, disabledKey]);
+    const host = JSON.parse(disabledKey) as string[];
+    if (props.permission) {
+      applyPermission(editor, permission, host, { allowCopy: props.allowCopy, mode: props.mode });
+    } else {
+      editor.setDisabledCommands(host);
+      if (props.mode && editor.getMode() !== props.mode) editor.setMode(props.mode);
+    }
+    const before = lastPermission.current;
+    lastPermission.current = permission;
+    if (before && lowerPermission(permission, before)) {
+      setNotice(permission === 'view' ? 'Your access changed: you can now only view this document.' : permission === 'comment' ? 'Your access changed: you can now comment, but not edit.' : 'Your access changed: your edits are now suggestions.');
+    }
+  }, [editor, permission, props.permission, props.mode, props.allowCopy, disabledKey]);
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(''), 8000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
+  // Comments: the panel and the host's store.
+  const commentOptions: CommentsOptions | null = props.comments === true ? {} : props.comments ? props.comments : null;
+  const people: Person[] = Array.isArray(commentOptions?.people) ? commentOptions.people : [];
+  const [assignees, setAssignees] = useState(() => new Map<number, Person | null>());
+  const comments = useCommentSync(commentOptions ? editor : null, commentOptions, people, assignees);
+  const [commentsOpenState, setCommentsOpenState] = useState(false);
+  const commentsOpen = !!commentOptions && (props.commentsOpen ?? commentsOpenState) && (permission !== 'view' || props.commentsVisibleToViewers !== false);
+  const setCommentsOpen = (v: boolean) => {
+    setCommentsOpenState(v);
+    latest.current.onCommentsOpenChange?.(v);
+  };
+  // The page makes room for the comments panel (on a phone it is a sheet over the page).
+  useEffect(() => {
+    if (!editor || editor.destroyed || isMobile) return;
+    editor.canvas.style.right = commentsOpen ? 'min(340px, 100%)' : '0';
+  }, [editor, commentsOpen, isMobile]);
+
+  // Presence: who else is here, and following one of them.
+  const [presence, setPresence] = useState<PresenceUser[]>([]);
+  const [following, setFollowing] = useState<string | null>(null);
+  useEffect(() => {
+    if (!collaboration?.onPresence) return;
+    return collaboration.onPresence(setPresence);
+  }, [collaboration]);
+  useEffect(() => {
+    if (!editor || editor.destroyed || !collaboration) return;
+    return editor.onSelection((info) => setFollowing(info.following ?? null));
+  }, [editor, collaboration]);
+  const follow = (name: string | null) => {
+    if (!editor || editor.destroyed) return;
+    editor.followPeer(name);
+    setFollowing(name);
+  };
 
   // AutoSave follows the prop when it changes (the title bar toggle can still switch it).
   const firstAutoSave = useRef(props.autoSave);
@@ -365,17 +445,45 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
           hiddenTabs={hiddenTabsFor(props.tabs, props.hiddenTabs)}
           disabledCommands={props.disabledCommands ?? []}
           onVersions={versionOptions ? () => setVersionsOpen(true) : undefined}
-          onAi={ai ? () => setAiOpen(true) : undefined}
+          onAi={ai && canWrite(permission) ? () => setAiOpen(true) : undefined}
           onInsets={setInsets}
+          permission={permission}
+          onComments={commentOptions && (permission !== 'view' || props.commentsVisibleToViewers !== false) ? () => setCommentsOpen(true) : undefined}
+          openComments={commentOptions ? openThreads(comments) : 0}
+          people={collaboration && props.presence !== false ? presence.filter((u) => !u.self).length : 0}
         />
       )}
+      {editor && !isMobile && !versionsOpen && (props.permission || commentOptions || (collaboration && props.presence !== false && presence.some((u) => !u.self))) && (
+        <WorkspaceRow dark={props.dark ?? props.prefs?.dark}>
+          {props.permission && <AccessChip level={permission} />}
+          {collaboration && props.presence !== false && <PresenceAvatars users={presence} following={following} onFollow={follow} />}
+          {commentOptions && !commentsOpen && (permission !== 'view' || props.commentsVisibleToViewers !== false) && <CommentsButton count={openThreads(comments)} onClick={() => setCommentsOpen(true)} />}
+        </WorkspaceRow>
+      )}
+      {editor && commentOptions && commentsOpen && !versionsOpen && (
+        <CommentsPanel
+          editor={editor}
+          comments={comments}
+          user={userOf(props)}
+          people={people}
+          options={commentOptions}
+          canComment={canComment(permission)}
+          assignees={assignees}
+          onAssign={(id, p) => setAssignees((m) => new Map(m).set(id, p))}
+          onClose={() => setCommentsOpen(false)}
+          dark={props.dark ?? props.prefs?.dark}
+          sheet={isMobile}
+        />
+      )}
+      {notice && <Notice dark={props.dark ?? props.prefs?.dark} onClose={() => setNotice('')}>{notice}</Notice>}
       {editor && ai && !versionsOpen && (
         <AiBar
           editor={editor}
           options={ai}
           open={aiOpen}
           onOpenChange={setAiOpen}
-          launcher={ai.launcher !== 'none' && !isMobile}
+          launcher={ai.launcher !== 'none' && !isMobile && canWrite(permission)}
+          readOnly={!canWrite(permission)}
           bottom={isMobile ? 64 : undefined}
           dark={props.dark ?? props.prefs?.dark}
         />

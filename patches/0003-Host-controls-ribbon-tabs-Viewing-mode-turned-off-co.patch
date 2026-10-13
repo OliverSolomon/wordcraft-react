@@ -16,20 +16,19 @@ Subject: [PATCH 3/6] Host controls: ribbon tabs, Viewing mode, turned-off
 - Clicking a comment card in the Comments pane goes to the text it's about.
 ---
  crates/engine/src/session.rs   | 28 ++++++++++++
- crates/fonts/src/fontdb.rs     |  5 ++
- crates/fonts/src/word.rs       | 14 +++++-
+ crates/fonts/src/fontdb.rs     |  7 +++
  crates/ui-egui/src/lib.rs      | 84 ++++++++++++++++++++++++++++++++++
  crates/ui-egui/src/panes.rs    | 10 +++-
  crates/ui-egui/src/previews.rs |  5 ++
- crates/ui-egui/src/ribbon.rs   | 41 ++++++++++-------
+ crates/ui-egui/src/ribbon.rs   | 39 +++++++++++-----
  crates/ui-egui/src/widgets.rs  | 21 ++++++++-
- 8 files changed, 187 insertions(+), 21 deletions(-)
+ 7 files changed, 179 insertions(+), 15 deletions(-)
 
 diff --git a/crates/engine/src/session.rs b/crates/engine/src/session.rs
-index 44c25b7..e402626 100644
+index d29c14b..cf4be4d 100644
 --- a/crates/engine/src/session.rs
 +++ b/crates/engine/src/session.rs
-@@ -296,6 +296,10 @@ pub struct Session {
+@@ -426,6 +426,10 @@ pub struct Session {
      pub external_history: bool,
      pub history_requests: Vec<bool>,
      pub external_can: (bool, bool),
@@ -40,7 +39,7 @@ index 44c25b7..e402626 100644
      /// Editing inside an equation: which one and the caret in it.
      pub math: Option<MathEdit>,
      /// Equations are typed in LaTeX rather than the linear format.
-@@ -455,6 +459,8 @@ impl Session {
+@@ -621,6 +625,8 @@ impl Session {
              external_history: false,
              history_requests: Vec::new(),
              external_can: (false, false),
@@ -49,7 +48,7 @@ index 44c25b7..e402626 100644
              read_aloud: Default::default(),
              password: None,
              column: None,
-@@ -624,6 +630,23 @@ impl Session {
+@@ -864,6 +870,23 @@ impl Session {
      pub fn close_typing(&mut self) {
          self.typing_open = false;
      }
@@ -73,7 +72,7 @@ index 44c25b7..e402626 100644
      pub fn can_undo(&self) -> bool {
          if self.external_history {
              return self.external_can.0;
-@@ -779,6 +802,8 @@ impl Session {
+@@ -1068,6 +1091,8 @@ impl Session {
              external_history: _,
              history_requests: _,
              external_can: _,
@@ -82,7 +81,7 @@ index 44c25b7..e402626 100644
              // Equation editing mode, like `view`: not part of the document or its history.
              math: _,
              math_latex: _,
-@@ -860,6 +885,9 @@ impl Session {
+@@ -1151,6 +1176,9 @@ impl Session {
          if let Some(why) = (spec.enabled)(self) {
              return Err(CmdError::Disabled(format!("{id}: {why}")));
          }
@@ -93,53 +92,28 @@ index 44c25b7..e402626 100644
          let guard = if spec.mutates { crate::cmd::protect::check_before(self, id, params)? } else { false };
          if spec.mutates && self.doc.settings.protection.as_deref() == Some("trackedChanges") {
 diff --git a/crates/fonts/src/fontdb.rs b/crates/fonts/src/fontdb.rs
-index 2d0573a..8bf6241 100644
+index 816ac27..0da7cd1 100644
 --- a/crates/fonts/src/fontdb.rs
 +++ b/crates/fonts/src/fontdb.rs
-@@ -1014,6 +1014,11 @@ impl FontDb {
+@@ -1073,6 +1073,13 @@ impl FontDb {
                  added += 1;
              }
          }
 +        drop(faces);
 +        if added > 0 {
-+            // A family that resolved to a substitute may be here now.
-+            crate::word::clear_resolved();
++            // A family that resolved to a substitute may be here now: forget fallback choices
++            // and start a new generation, as user fonts do, so `word::resolve` looks again.
++            self.fallbacks.write().unwrap_or_else(|e| e.into_inner()).map.clear();
++            self.generation.fetch_add(1, Ordering::AcqRel);
 +        }
          added
      }
  
-diff --git a/crates/fonts/src/word.rs b/crates/fonts/src/word.rs
-index 5cb79f5..8a40b6a 100644
---- a/crates/fonts/src/word.rs
-+++ b/crates/fonts/src/word.rs
-@@ -174,10 +174,20 @@ fn style_name(bold: bool, italic: bool) -> &'static str {
-     }
- }
- 
-+type ResolveCache = Mutex<HashMap<(String, bool, bool), Resolved>>;
-+static RESOLVED: OnceLock<ResolveCache> = OnceLock::new();
-+
-+/// Forget memoised resolutions (fonts were added at run time, so a family that resolved to a
-+/// substitute may now be installed).
-+pub fn clear_resolved() {
-+    if let Some(c) = RESOLVED.get() {
-+        c.lock().unwrap_or_else(|e| e.into_inner()).clear();
-+    }
-+}
-+
- /// Resolve `family` with bold/italic to a face (memoised).
- pub fn resolve(family: &str, bold: bool, italic: bool) -> Resolved {
--    static CACHE: OnceLock<Mutex<HashMap<(String, bool, bool), Resolved>>> = OnceLock::new();
--    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-+    let cache = RESOLVED.get_or_init(|| Mutex::new(HashMap::new()));
-     let key = (family.to_string(), bold, italic);
-     if let Some(r) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
-         return *r;
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index 2f56adc..8cad9d9 100644
+index e70c1ea..e031042 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
-@@ -138,6 +138,10 @@ pub struct UiState {
+@@ -200,6 +200,10 @@ pub struct UiState {
      pub hide_title_bar: bool,
      /// Embedded: hide the ribbon including its tab row (Word's "Auto-hide Ribbon").
      pub hide_ribbon: bool,
@@ -150,7 +124,7 @@ index 2f56adc..8cad9d9 100644
      /// Editing preferences; the session owns them while running (see [`WordApp::prefs`]).
      pub editing: wordcraft_engine::Prefs,
      /// Read Aloud speed (1 = normal) and whether it skips citations and bibliographies.
-@@ -208,6 +212,8 @@ impl Default for UiState {
+@@ -286,6 +290,8 @@ impl Default for UiState {
              language: i18n::AUTO.into(),
              hide_title_bar: false,
              hide_ribbon: false,
@@ -159,7 +133,7 @@ index 2f56adc..8cad9d9 100644
              editing: wordcraft_engine::Prefs::default(),
              read_aloud_rate: 1.0,
              read_aloud_skip_citations: true,
-@@ -301,6 +307,12 @@ pub struct WordApp {
+@@ -420,6 +426,12 @@ pub struct WordApp {
      pub autosave: bool,
      /// Other people editing now (real-time co-editing), shown beside the account avatar.
      pub collaborators: Vec<Collaborator>,
@@ -172,7 +146,7 @@ index 2f56adc..8cad9d9 100644
      pub word_count: (u64, usize),
      last_autosave: f64,
      /// The tab shown before the Equation tab came up (restored when editing ends).
-@@ -382,6 +394,8 @@ impl WordApp {
+@@ -517,6 +529,8 @@ impl WordApp {
              quit_requested: false,
              autosave: true,
              collaborators: Vec::new(),
@@ -181,7 +155,7 @@ index 2f56adc..8cad9d9 100644
              word_count: (0, 0),
              last_autosave: 0.0,
              equation_prev_tab: None,
-@@ -507,6 +521,11 @@ impl WordApp {
+@@ -667,6 +681,11 @@ impl WordApp {
          if !matches!(id, "ui.openRecipientList" | "mailings.recipients") {
              self.recipient_list_pending = false;
          }
@@ -193,9 +167,9 @@ index 2f56adc..8cad9d9 100644
          if let Some(r) = self.ui_command(id, &params) {
              return r;
          }
-@@ -770,6 +789,22 @@ impl WordApp {
-                 self.pick_picture();
-                 json!({"pending": self.change_picture_target.is_some()})
+@@ -1022,6 +1041,22 @@ impl WordApp {
+                 self.canvas.want_focus = true;
+                 json!({"pending": "contextMenu"})
              }
 +            // Word's Editing / Reviewing / Viewing switch.
 +            "ui.mode" => {
@@ -216,7 +190,7 @@ index 2f56adc..8cad9d9 100644
              "ui.collapseRibbon" => {
                  self.ui.ribbon_collapsed = !self.ui.ribbon_collapsed;
                  json!({"collapsed": self.ui.ribbon_collapsed})
-@@ -1063,6 +1098,52 @@ impl WordApp {
+@@ -1448,6 +1483,52 @@ impl WordApp {
          self.session.path.is_some() && self.session.path == self.autosave_path
      }
  
@@ -269,7 +243,7 @@ index 2f56adc..8cad9d9 100644
      /// Let AutoSave write to `path`, as if the user had saved there in this session (`None` stops
      /// it). For hosts that keep documents themselves, such as a web page embedding WordCraft: on
      /// the web AutoSave then hands each save to `Services::download`, which the host handles.
-@@ -1160,6 +1241,9 @@ impl WordApp {
+@@ -1550,6 +1631,9 @@ impl WordApp {
          // Keytips are read before layout so the frame paints the new state; badges paint after
          // the ribbon so they sit on top of it.
          crate::keytips::logic(self, &ctx);
@@ -280,10 +254,10 @@ index 2f56adc..8cad9d9 100644
              backstage::show(self, ui);
          } else {
 diff --git a/crates/ui-egui/src/panes.rs b/crates/ui-egui/src/panes.rs
-index c795d91..3ab15bd 100644
+index 6c1dad2..f5f8d8d 100644
 --- a/crates/ui-egui/src/panes.rs
 +++ b/crates/ui-egui/src/panes.rs
-@@ -329,7 +329,7 @@ fn comments(app: &mut WordApp, ui: &mut Ui) {
+@@ -359,7 +359,7 @@ fn comments(app: &mut WordApp, ui: &mut Ui) {
          for c in list.as_array().cloned().unwrap_or_default() {
              let id = c.get("id").and_then(Value::as_u64).unwrap_or(0);
              let reply = c.get("parent").is_some_and(|p| !p.is_null());
@@ -292,7 +266,7 @@ index c795d91..3ab15bd 100644
                  ui.set_width(ui.available_width());
                  if reply {
                      ui.add_space(0.0);
-@@ -371,6 +371,14 @@ fn comments(app: &mut WordApp, ui: &mut Ui) {
+@@ -401,6 +401,14 @@ fn comments(app: &mut WordApp, ui: &mut Ui) {
                      }
                  }
              });
@@ -308,7 +282,7 @@ index c795d91..3ab15bd 100644
          }
      });
 diff --git a/crates/ui-egui/src/previews.rs b/crates/ui-egui/src/previews.rs
-index 5127d10..03b4291 100644
+index e5a79ee..233a101 100644
 --- a/crates/ui-egui/src/previews.rs
 +++ b/crates/ui-egui/src/previews.rs
 @@ -29,6 +29,11 @@ pub struct Previews {
@@ -324,10 +298,10 @@ index 5127d10..03b4291 100644
      /// one (宋体 for SimSun in Chinese, #505), like Word's.
      pub fn families(&mut self) -> Vec<String> {
 diff --git a/crates/ui-egui/src/ribbon.rs b/crates/ui-egui/src/ribbon.rs
-index 78fac2d..8f9cdda 100644
+index f558bd7..93d2cc1 100644
 --- a/crates/ui-egui/src/ribbon.rs
 +++ b/crates/ui-egui/src/ribbon.rs
-@@ -102,7 +102,8 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+@@ -173,7 +173,8 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
      // Format) may be stored while the selection moved away, and a tab may have been hidden.
      let user_tabs = app.session.ribbon.tabs().into_owned();
      let mut tabs: Vec<(String, bool)> = vec![("File".to_string(), false)];
@@ -337,18 +311,14 @@ index 78fac2d..8f9cdda 100644
      for ct in contextual_tabs(&app.session) {
          if ct == "Outlining" {
              tabs.insert(1.min(tabs.len()), (ct.to_string(), false));
-@@ -171,21 +172,27 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+@@ -242,17 +243,27 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                          let _ = app.run("ui.backstage", json!({"value": true, "page": "export"}));
                      }
                      ui.add_space(6.0);
 +                    // Word's mode switch: Editing, Reviewing (Track Changes) or Viewing.
                      let track = app.session.doc.settings.track_changes;
--                    let mode = crate::widgets::icon_text_button(
--                        ui,
--                        "pencil",
--                        &format!("{} ▾", if track { tl!("Reviewing") } else { tl!("Editing") }),
--                        regular(12.0),
--                    );
+-                    let mode =
+-                        crate::widgets::icon_text_menu_button(ui, "pencil", if track { tl!("Reviewing") } else { tl!("Editing") }, regular(12.0));
 +                    let (icon, label) = if app.session.viewing {
 +                        ("readMode", tl!("Viewing"))
 +                    } else if track {
@@ -356,7 +326,7 @@ index 78fac2d..8f9cdda 100644
 +                    } else {
 +                        ("pencil", tl!("Editing"))
 +                    };
-+                    let mode = crate::widgets::icon_text_button(ui, icon, &format!("{label} ▾"), regular(12.0));
++                    let mode = crate::widgets::icon_text_menu_button(ui, icon, label, regular(12.0));
                      egui::Popup::menu(&mode).show(|ui| {
 -                        if ui.selectable_label(!track, tl!(tl!("Editing — edit the document directly"))).clicked() {
 -                            let _ = app.run("review.trackChanges", json!({"value": false}));
@@ -378,7 +348,7 @@ index 78fac2d..8f9cdda 100644
                          }
                      });
                      ui.add_space(4.0);
-@@ -411,11 +418,13 @@ fn home(app: &mut WordApp, ui: &mut Ui) {
+@@ -521,14 +532,18 @@ fn home(app: &mut WordApp, ui: &mut Ui) {
              crate::widgets::row(ui, |ui| {
                  let font = st.get("font").and_then(Value::as_str).unwrap_or("").to_string();
                  let font = app.previews.font_shown(&font);
@@ -386,19 +356,24 @@ index 78fac2d..8f9cdda 100644
 +                let fams = app.font_box_items();
                  let prev = app.previews.font_preview_fn();
                  if let Some(f) = font_combo(ui, "font", 150.0, &font, &fams, Some(&*prev)) {
-                     let f = app.previews.font_stored(&f);
--                    let _ = app.run("format.font", json!({"name": f}));
-+                    if app.run("format.font", json!({"name": f})).is_ok() {
-+                        app.font_picked(&f);
-+                    }
+                     let _ = if f == crate::widgets::ADD_FONT {
+                         app.run("font.add", json!({}))
+                     } else {
+                         let f = app.previews.font_stored(&f);
+-                        app.run("format.font", json!({"name": f}))
++                        let r = app.run("format.font", json!({"name": f}));
++                        if r.is_ok() {
++                            app.font_picked(&f);
++                        }
++                        r
+                     };
                  }
                  let size = st
-                     .get("size")
 diff --git a/crates/ui-egui/src/widgets.rs b/crates/ui-egui/src/widgets.rs
-index 659d0f3..8a2348c 100644
+index 3246a0a..f6d3183 100644
 --- a/crates/ui-egui/src/widgets.rs
 +++ b/crates/ui-egui/src/widgets.rs
-@@ -81,7 +81,8 @@ fn keytip_badge(ui: &Ui, rect: Rect, id: &str, name: &str) {
+@@ -91,7 +91,8 @@ fn keytip_badge(ui: &Ui, rect: Rect, id: &str, name: &str) {
  /// Whether a command exists and is enabled.
  pub fn enabled(app: &WordApp, id: &str) -> bool {
      match app.session.registry.get(id) {
@@ -408,7 +383,7 @@ index 659d0f3..8a2348c 100644
          // Zotero: one command at a time, and only in the desktop app.
          None if id.starts_with("ui.zotero.") => app.zotero.busy.is_none() && !cfg!(target_arch = "wasm32"),
          None if id == "ui.linkTextBox" => enabled(app, "shape.link"),
-@@ -440,6 +441,9 @@ pub fn font_combo(
+@@ -509,6 +510,9 @@ pub fn font_combo(
      combo_impl(ui, id, width, current, items, preview, true)
  }
  
@@ -418,7 +393,7 @@ index 659d0f3..8a2348c 100644
  /// Indices of the `items` matching `query`, ignoring case: exact matches, then the names starting
  /// with it, then those containing it, each group in list order. A blank query matches everything.
  pub fn font_matches(query: &str, items: &[String]) -> Vec<usize> {
-@@ -447,8 +451,13 @@ pub fn font_matches(query: &str, items: &[String]) -> Vec<usize> {
+@@ -516,8 +520,13 @@ pub fn font_matches(query: &str, items: &[String]) -> Vec<usize> {
      if q.is_empty() {
          return (0..items.len()).collect();
      }
@@ -432,7 +407,7 @@ index 659d0f3..8a2348c 100644
          let name = it.to_lowercase();
          if name == q {
              exact.push(i);
-@@ -539,7 +548,7 @@ fn combo_impl(
+@@ -608,7 +617,7 @@ fn combo_impl(
              if enter {
                  let picked = s.matches.get(s.highlight).and_then(|&i| items.get(i));
                  out = Some(match picked {
@@ -441,7 +416,7 @@ index 659d0f3..8a2348c 100644
                      _ => text.clone(),
                  });
                  s.open = false;
-@@ -651,6 +660,14 @@ fn list_rows<'a>(
+@@ -727,6 +736,14 @@ fn list_rows<'a>(
          ui.set_min_width(width + 60.0);
          for k in range {
              let Some(it) = item(k) else { continue };

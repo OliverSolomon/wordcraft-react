@@ -133,15 +133,15 @@ export default function Overview() {
           <p>It renders on the server as a sized box and starts in the browser, so the App Router needs no dynamic import.</p>
           <ul className="ticks">
             <li>
-              <CheckCircle size={16} weight="fill" />
+              <CheckCircle size={16} />
               Saves reach your app through onSave, including Word-style AutoSave.
             </li>
             <li>
-              <CheckCircle size={16} weight="fill" />
+              <CheckCircle size={16} />
               Your bundler emits the WebAssembly binary and caches it.
             </li>
             <li>
-              <CheckCircle size={16} weight="fill" />
+              <CheckCircle size={16} />
               Kept in step with WordCraft{rev ? ` (now ${rev})` : ''}: synced every two hours, released when the tests pass.
             </li>
           </ul>

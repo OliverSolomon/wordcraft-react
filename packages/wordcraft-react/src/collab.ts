@@ -21,7 +21,7 @@
  */
 import * as Y from 'yjs';
 
-import type { CollabCursor, CollabPeer, Collaboration, WordcraftEditor, WordcraftUser } from './core.js';
+import type { CollabCursor, CollabPeer, Collaboration, PresenceUser, WordcraftEditor, WordcraftUser } from './core.js';
 
 /** The parts of a y-protocols `Awareness` this uses. */
 export interface AwarenessLike {
@@ -57,6 +57,20 @@ export interface YjsCollaborationOptions {
   user?: WordcraftUser;
   /** Called if joining fails. */
   onError?: (error: Error) => void;
+  /** Who is in the document, whenever that changes (for avatars in your own header). */
+  onPresenceChange?: (users: PresenceUser[]) => void;
+  /** After how long without activity someone shows as idle. Default 60 s. */
+  idleAfter?: number;
+}
+
+const ANIMALS = ['Otter', 'Heron', 'Lynx', 'Ibis', 'Gecko', 'Oryx', 'Puffin', 'Marten', 'Kudu', 'Tapir', 'Wren', 'Serval'];
+const COLORS = ['#c2410c', '#1d4ed8', '#047857', '#7e22ce', '#be185d', '#0e7490', '#a16207', '#4338ca'];
+
+/** A stable colour for a name. */
+function colorFor(name: string): string {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return COLORS[h % COLORS.length]!;
 }
 
 const ORIGIN = 'wordcraft';
@@ -85,7 +99,20 @@ function synced(provider: ProviderLike | undefined, explicit: Promise<unknown> |
 
 /** Connect a WordCraft editor to a Yjs document (and awareness, for cursors and avatars). */
 export function yjsCollaboration(options: YjsCollaborationOptions): Collaboration {
+  const listeners = new Set<(users: PresenceUser[]) => void>();
+  let last: PresenceUser[] = [];
+  const publish = (users: PresenceUser[]) => {
+    if (JSON.stringify(users) === JSON.stringify(last)) return;
+    last = users;
+    options.onPresenceChange?.(users);
+    listeners.forEach((cb) => cb(users));
+  };
   return {
+    onPresence(cb) {
+      listeners.add(cb);
+      cb(last);
+      return () => listeners.delete(cb);
+    },
     attach(editor: WordcraftEditor) {
       const { doc } = options;
       const awareness = options.awareness ?? options.provider?.awareness ?? null;
@@ -112,27 +139,68 @@ export function yjsCollaboration(options: YjsCollaborationOptions): Collaboratio
 
         if (!awareness) return;
         const user = options.user ?? editor.getUser();
-        awareness.setLocalStateField('user', { name: user.name, color: user.color ?? null, id: user.id ?? null });
-        editor.collab.onCursor((cursor: CollabCursor | null) => awareness.setLocalStateField('cursor', cursor));
+        // Someone who joins through a link without a name is "Anonymous <animal>".
+        const anonymous = !user.name?.trim() || user.name === 'Guest';
+        const name = anonymous ? `Anonymous ${ANIMALS[awareness.clientID % ANIMALS.length]}` : user.name.trim();
+        const color = user.color ?? colorFor(name);
+        const mode = () => (editor.destroyed || editor.getMode() === 'viewing' ? 'viewing' : 'editing');
+        awareness.setLocalStateField('user', { name, color, id: user.id ?? null, avatarUrl: user.avatarUrl ?? null, anonymous });
+        awareness.setLocalStateField('active', Date.now());
+        awareness.setLocalStateField('mode', mode());
+        // Activity: moving the caret or editing (announced at most every 10 s).
+        let lastActive = Date.now();
+        const touch = () => {
+          if (Date.now() - lastActive < 10_000) return;
+          lastActive = Date.now();
+          awareness.setLocalStateField('active', lastActive);
+        };
+        editor.collab.onCursor((cursor: CollabCursor | null) => {
+          awareness.setLocalStateField('cursor', cursor);
+          touch();
+        });
         cleanups.push(() => {
           editor.collab.onCursor(null);
           awareness.setLocalStateField('cursor', null);
         });
 
+        const idleAfter = options.idleAfter ?? 60_000;
         const onAwareness = () => {
           if (editor.destroyed) return;
           const peers: CollabPeer[] = [];
+          const users: PresenceUser[] = [];
+          const now = Date.now();
           awareness.getStates().forEach((state, clientId) => {
-            if (clientId === awareness.clientID) return;
-            const u = (state.user ?? {}) as { name?: string; color?: string | null };
-            const c = (state.cursor ?? null) as CollabCursor | null;
+            const u = (state.user ?? {}) as { name?: string; color?: string | null; id?: string | null; avatarUrl?: string | null; anonymous?: boolean };
             if (!u.name) return;
+            const idle = typeof state.active === 'number' ? now - state.active > idleAfter : false;
+            users.push({
+              clientId,
+              id: u.id ?? null,
+              name: u.name,
+              color: u.color ?? colorFor(u.name),
+              avatarUrl: u.avatarUrl ?? null,
+              state: state.mode === 'viewing' ? 'viewing' : 'editing',
+              idle,
+              self: clientId === awareness.clientID,
+              anonymous: !!u.anonymous,
+            });
+            if (clientId === awareness.clientID) return;
+            const c = (state.cursor ?? null) as CollabCursor | null;
             peers.push({ name: u.name, color: u.color ?? undefined, anchor: c?.anchor ?? null, head: c?.head ?? null });
           });
           editor.collab.setPeers(peers);
+          users.sort((a, b) => Number(b.self) - Number(a.self) || a.name.localeCompare(b.name));
+          publish(users);
         };
         awareness.on('change', onAwareness);
         cleanups.push(() => awareness.off('change', onAwareness));
+        // Idle times pass without awareness changes, and the mode can change: look every 15 s.
+        const tick = setInterval(() => {
+          const m = mode();
+          if (awareness.getStates().get(awareness.clientID)?.mode !== m) awareness.setLocalStateField('mode', m);
+          onAwareness();
+        }, 15_000);
+        cleanups.push(() => clearInterval(tick));
         onAwareness();
       };
 
@@ -149,6 +217,7 @@ export function yjsCollaboration(options: YjsCollaborationOptions): Collaboratio
           editor.collab.setPeers([]);
           editor.collab.stop();
         }
+        publish([]);
       };
     },
   };

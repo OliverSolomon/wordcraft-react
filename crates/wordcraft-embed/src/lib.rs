@@ -15,6 +15,7 @@
 
 #[cfg(target_arch = "wasm32")]
 mod collab;
+pub mod doc_tools;
 pub mod touch;
 #[cfg(target_arch = "wasm32")]
 mod touch_web;
@@ -136,6 +137,16 @@ pub fn mime_for(name: &str) -> &'static str {
         Some("json") => "application/json",
         _ => "application/octet-stream",
     }
+}
+
+/// `#rrggbb` (or `rrggbb`) as RGB.
+pub fn parse_hex(s: Option<&str>) -> Option<[u8; 3]> {
+    let hex = s?.trim().trim_start_matches('#');
+    if hex.len() != 6 {
+        return None;
+    }
+    let v = u32::from_str_radix(hex, 16).ok()?;
+    Some([(v >> 16) as u8, (v >> 8) as u8, v as u8])
 }
 
 #[cfg(test)]

@@ -19,22 +19,22 @@ Content-Transfer-Encoding: 8bit
   host_events; the title reads 'Name • Saved'; mode items show two lines.
 - Text without em dashes in the strings these patches touch.
 ---
- crates/ui-egui/src/backstage.rs    | 10 +++++++
- crates/ui-egui/src/canvas.rs       | 45 ++++++++++++++++++++++++++++--
- crates/ui-egui/src/chrome.rs       | 27 ++++++++++--------
+ crates/ui-egui/src/backstage.rs    | 10 ++++++++
+ crates/ui-egui/src/canvas.rs       | 39 ++++++++++++++++++++++++++++--
+ crates/ui-egui/src/chrome.rs       | 27 ++++++++++++---------
  crates/ui-egui/src/credits.rs      |  4 +--
- crates/ui-egui/src/dialogs.rs      | 24 ++++++++--------
- crates/ui-egui/src/lib.rs          | 35 ++++++++++++++++++++---
- crates/ui-egui/src/mini_toolbar.rs | 33 ++++++++++++++++++----
- crates/ui-egui/src/previews.rs     | 10 ++++++-
- crates/ui-egui/src/ribbon.rs       | 22 +++++++++++----
- 9 files changed, 166 insertions(+), 44 deletions(-)
+ crates/ui-egui/src/dialogs.rs      | 24 +++++++++---------
+ crates/ui-egui/src/lib.rs          | 35 ++++++++++++++++++++++++---
+ crates/ui-egui/src/mini_toolbar.rs | 33 ++++++++++++++++++++-----
+ crates/ui-egui/src/previews.rs     | 10 +++++++-
+ crates/ui-egui/src/ribbon.rs       | 22 ++++++++++++-----
+ 9 files changed, 160 insertions(+), 44 deletions(-)
 
 diff --git a/crates/ui-egui/src/backstage.rs b/crates/ui-egui/src/backstage.rs
-index 99dbd21..a2739a4 100644
+index bfce74d..f472226 100644
 --- a/crates/ui-egui/src/backstage.rs
 +++ b/crates/ui-egui/src/backstage.rs
-@@ -320,6 +320,16 @@ fn info_page(app: &mut WordApp, ui: &mut Ui) {
+@@ -355,6 +355,16 @@ fn info_page(app: &mut WordApp, ui: &mut Ui) {
                  let _ = app.run("file.encrypt", json!({"password": null}));
              }
          });
@@ -52,44 +52,17 @@ index 99dbd21..a2739a4 100644
          ui.label(egui::RichText::new(tl!("Statistics")).font(semibold(15.0)));
          for (l, k) in [("Pages", "pages"), ("Words", "words"), ("Paragraphs", "paragraphs"), ("Sections", "sections"), ("Comments", "comments")] {
 diff --git a/crates/ui-egui/src/canvas.rs b/crates/ui-egui/src/canvas.rs
-index fb524e3..93f7699 100644
+index 8c4012d..017be42 100644
 --- a/crates/ui-egui/src/canvas.rs
 +++ b/crates/ui-egui/src/canvas.rs
-@@ -50,6 +50,8 @@ pub struct CanvasState {
-     pub context_synonyms: Option<serde_json::Value>,
-     /// The right-click context menu is open (the mini toolbar stands down while it is).
-     pub context_menu_open: bool,
-+    /// Where the context menu opened, so the mini toolbar can sit above it, as on Windows.
-+    pub context_at: Option<Pos2>,
-     /// Screen rect of the selection's first line, for the floating mini toolbar.
-     pub mini_anchor: Option<Rect>,
-     /// A picture, shape or text box being dragged by its frame.
-@@ -128,6 +130,7 @@ impl Default for CanvasState {
-             erasing: None,
-             ink_ui: Default::default(),
-             context_menu_open: false,
-+            context_at: None,
-             mini_anchor: None,
-             pasted: false,
-             swallow_text: false,
-@@ -790,6 +793,9 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
-             app.canvas.context_synonyms = app.session.run("review.thesaurus", &json!({})).ok().and_then(|v| v.get("synonyms").cloned());
-         }
-     }
-+    if resp.secondary_clicked() {
-+        app.canvas.context_at = resp.interact_pointer_pos();
-+    }
-     resp.context_menu(|ui| context_menu(app, ui));
-     // Stand down while the context menu owns the pointer so the two never double up;
-     // `context_menu_opened` also covers the click that dismisses the menu.
-@@ -809,7 +815,13 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+@@ -1346,7 +1346,13 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
      if let (Some(h), Some(v)) = (hruler, vruler) {
          rulers(app, ui, h, v, &rects, &layout, geo.scale);
      }
 -    if let Some(sel) = app.canvas.mini_anchor
 +    if app.canvas.context_menu_open
 +        && app.ui.mini_toolbar
-+        && let Some(at) = app.canvas.context_at
++        && let Some(at) = app.canvas.context_menu_at
 +    {
 +        // Windows shows the mini toolbar above the context menu, with or without a selection.
 +        crate::mini_toolbar::show(app, ui.ctx(), Rect::from_min_size(at, vec2(0.0, 0.0)), area);
@@ -97,7 +70,7 @@ index fb524e3..93f7699 100644
          && app.ui.mini_toolbar
      {
          crate::mini_toolbar::show(app, ui.ctx(), sel, area);
-@@ -1361,10 +1373,16 @@ fn rulers(app: &mut WordApp, ui: &mut Ui, h: Rect, v: Rect, rects: &[Rect], layo
+@@ -2026,10 +2032,16 @@ fn rulers(app: &mut WordApp, ui: &mut Ui, h: Rect, v: Rect, rects: &[Rect], layo
      p.rect_filled(Rect::from_min_max(pos2(v.min.x, h.min.y), pos2(v.max.x, h.max.y)), 0.0, t.canvas);
      p.rect_filled(h, 0.0, t.canvas);
      p.rect_filled(v, 0.0, t.canvas);
@@ -115,7 +88,7 @@ index fb524e3..93f7699 100644
      // Horizontal.
      let hp = ui.painter_at(h);
      let x0 = pr.min.x;
-@@ -1554,6 +1572,17 @@ fn ruler_scale(u: wordcraft_geom::Unit) -> (f32, i32, i32) {
+@@ -2268,6 +2280,17 @@ fn ruler_scale(u: wordcraft_geom::Unit) -> (f32, i32, i32) {
      }
  }
  
@@ -133,7 +106,7 @@ index fb524e3..93f7699 100644
  /// One edge of a page's text area on a ruler.
  #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
  pub(crate) enum MarginEdge {
-@@ -1873,6 +1902,18 @@ fn is_followable_link(url: &str) -> bool {
+@@ -2651,6 +2674,18 @@ fn is_followable_link(url: &str) -> bool {
  
  #[cfg(test)]
  mod tests {
@@ -150,22 +123,22 @@ index fb524e3..93f7699 100644
 +    }
 +
      use super::*;
+     use crate::table_resize::tests::{H, cell, screen, steps, table_window};
  
-     /// #167: dragging a ruler's margin edge sets that margin, snapped, never negative, and
 diff --git a/crates/ui-egui/src/chrome.rs b/crates/ui-egui/src/chrome.rs
-index cb5f51e..97b6c0e 100644
+index 0e4a9e3..f65ccf2 100644
 --- a/crates/ui-egui/src/chrome.rs
 +++ b/crates/ui-egui/src/chrome.rs
-@@ -162,7 +162,7 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
+@@ -261,7 +261,7 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
                      ui.painter().circle_filled(r.center(), control_h / 2.0 - 1.0, t.accent);
                      let initials: String = app.session.user_initials().chars().take(2).collect();
-                     ui.painter().text(r.center(), Align2::CENTER_CENTER, initials, semibold(10.5), egui::Color32::WHITE);
+                     ui.painter().text(r.center(), Align2::CENTER_CENTER, initials, semibold(10.5), t.on_accent);
 -                    resp.on_hover_text(format!("{} — set your name in File › Options", app.session.author));
 +                    resp.on_hover_text(format!("{} (set your name in File › Options)", app.session.author));
                      // People editing at the same time, as in Word's co-authoring.
                      for c in app.collaborators.iter().take(6) {
                          let (r, resp) = ui.allocate_exact_size(vec2(24.0, 26.0), Sense::hover());
-@@ -229,8 +229,9 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
+@@ -325,8 +325,9 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
                  });
              });
              // Centred title.
@@ -176,7 +149,7 @@ index cb5f51e..97b6c0e 100644
                  app.title_stem(),
                  if app.session.dirty {
                      tl!("Edited")
-@@ -245,15 +246,19 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
+@@ -341,15 +342,19 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
              let w = text_width(ui.painter(), &title, &font, track, t.text);
              let cx = full.center().x;
              if cx - w / 2.0 > qat_end + 10.0 && cx + w / 2.0 < right_start - 10.0 {
@@ -227,19 +200,19 @@ index f571b33..666e54f 100644
      }
  }
 diff --git a/crates/ui-egui/src/dialogs.rs b/crates/ui-egui/src/dialogs.rs
-index 8f4d340..a909829 100644
+index 975ff90..32c47da 100644
 --- a/crates/ui-egui/src/dialogs.rs
 +++ b/crates/ui-egui/src/dialogs.rs
-@@ -2234,7 +2234,7 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
-             let mut close = false;
-             for c in hits {
+@@ -2252,7 +2252,7 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+             let mut run: Option<&str> = enter.then(|| hits.first().map(|c| c.id)).flatten();
+             for c in &hits {
                  let sc = crate::widgets::shortcut_text(app, c.id);
 -                let label = format!("{}   —   {}", tl!(c.label), crate::i18n::location(c.location));
 +                let label = format!("{}   ·   {}", tl!(c.label), crate::i18n::location(c.location));
                  if ui.add(egui::Button::new(label).shortcut_text(sc).min_size(vec2(380.0, 0.0))).clicked() {
-                     let _ = app.run(c.id, json!({}));
-                     close = true;
-@@ -3126,17 +3126,17 @@ mod tests {
+                     run = Some(c.id);
+                 }
+@@ -3370,17 +3370,17 @@ mod tests {
          );
          let before = serde_json::to_value(&h.state().session.doc).unwrap();
          for (language, query, expected) in [
@@ -267,12 +240,12 @@ index 8f4d340..a909829 100644
 +            ("en", "INSERT.TABLE", "Table   ·   Insert › Tables"),
          ] {
              h.state_mut().ui.language = language.into();
-             h.state_mut().dialog = Some(Dialog::Commands { query: query.into() });
+             h.state_mut().dialog = Some(Dialog::Commands { query: query.into(), swallow: false });
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index 04b7199..28caf30 100644
+index de8406f..84d78a5 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
-@@ -319,6 +319,13 @@ pub struct WordApp {
+@@ -438,6 +438,13 @@ pub struct WordApp {
      pub host_events: Vec<String>,
      /// The collapsed ribbon is showing over the page because a tab was clicked (Word's behaviour).
      pub ribbon_peek: bool,
@@ -286,7 +259,7 @@ index 04b7199..28caf30 100644
      pub word_count: (u64, usize),
      last_autosave: f64,
      /// The tab shown before the Equation tab came up (restored when editing ends).
-@@ -403,6 +410,9 @@ impl WordApp {
+@@ -538,6 +545,9 @@ impl WordApp {
              cloud_fonts: Vec::new(),
              font_requests: Vec::new(),
              ai_button: false,
@@ -296,7 +269,7 @@ index 04b7199..28caf30 100644
              host_events: Vec::new(),
              ribbon_peek: false,
              word_count: (0, 0),
-@@ -807,10 +817,11 @@ impl WordApp {
+@@ -1059,10 +1069,11 @@ impl WordApp {
                      _ => (false, false),
                  };
                  self.session.viewing = viewing;
@@ -312,7 +285,7 @@ index 04b7199..28caf30 100644
                  }
                  json!({"mode": mode})
              }
-@@ -1114,6 +1125,21 @@ impl WordApp {
+@@ -1499,6 +1510,21 @@ impl WordApp {
          self.session.relayout();
      }
  
@@ -334,7 +307,7 @@ index 04b7199..28caf30 100644
      /// The font box picked `family`: remember it (Word's "Recently Used Fonts", ten at most) and
      /// ask the host for it if it isn't installed.
      pub fn font_picked(&mut self, family: &str) {
-@@ -1246,6 +1272,7 @@ impl WordApp {
+@@ -1636,6 +1662,7 @@ impl WordApp {
              ctx.request_repaint();
              return;
          }
@@ -343,7 +316,7 @@ index 04b7199..28caf30 100644
          // Keytips are read before layout so the frame paints the new state; badges paint after
          // the ribbon so they sit on top of it.
 diff --git a/crates/ui-egui/src/mini_toolbar.rs b/crates/ui-egui/src/mini_toolbar.rs
-index cc9a48a..2180482 100644
+index e5efee6..0c18ffa 100644
 --- a/crates/ui-egui/src/mini_toolbar.rs
 +++ b/crates/ui-egui/src/mini_toolbar.rs
 @@ -29,9 +29,10 @@ const SEP_W: f32 = 9.0;
@@ -360,7 +333,7 @@ index cc9a48a..2180482 100644
  /// Row 1: font, size, grow, shrink. The font box takes what row 2 leaves, so both rows end
  /// together and the box starts at the bar's left edge.
  const COMBO_FONT_W: f32 = ROW2_W - (COMBO_SIZE_W + GAP + 2.0 * BTN_W + 3.0 * SPACING);
-@@ -62,15 +63,27 @@ pub fn shown_id() -> egui::Id {
+@@ -62,6 +63,17 @@ pub fn shown_id() -> egui::Id {
      egui::Id::new("wc_mini_toolbar").with("shown")
  }
  
@@ -377,7 +350,8 @@ index cc9a48a..2180482 100644
 +
  /// Whether the bar may be shown for the current app state.
  pub fn visible(app: &WordApp) -> bool {
-     // Never over a modal dialog or the Backstage.
+     // Reading Mode permits text selection and copying, but never formatting controls.
+@@ -72,9 +84,10 @@ pub fn visible(app: &WordApp) -> bool {
      if app.dialog.is_some() || app.colors.is_some() || app.ui.backstage {
          return false;
      }
@@ -388,9 +362,9 @@ index cc9a48a..2180482 100644
 -        return false;
 +        return true;
      }
-     // Never while a drag-select is in progress (Word shows it on mouse-up).
-     if app.canvas.drag_selecting() {
-@@ -91,7 +104,9 @@ pub fn show(app: &mut WordApp, ctx: &egui::Context, selection: Rect, viewport: R
+     // Never while a drag-select is in progress, in the text or a table's selection areas (Word
+     // shows it on mouse-up), nor while a table is being moved.
+@@ -101,7 +114,9 @@ pub fn show(app: &mut WordApp, ctx: &egui::Context, selection: Rect, viewport: R
      if !visible(app) {
          return;
      }
@@ -401,7 +375,7 @@ index cc9a48a..2180482 100644
      let t = Tokens::get(ctx);
      // The bar sits above the document but below every popup, and is not movable: it is an overlay
      // pinned to the selection, so moving it would lose the association.
-@@ -172,6 +187,12 @@ fn content(app: &mut WordApp, ui: &mut egui::Ui, t: &Tokens) {
+@@ -186,6 +201,12 @@ fn content(app: &mut WordApp, ui: &mut egui::Ui, t: &Tokens) {
          widgets::small(ui, app, "alignCenter", None, "Center", "para.alignCenter", json!({}), align == A::Center);
          widgets::small(ui, app, "alignRight", None, "Align Right", "para.alignRight", json!({}), align == A::Right);
          widgets::small(ui, app, "justify", None, "Justify", "para.justify", json!({}), align == A::Justify);
@@ -415,7 +389,7 @@ index cc9a48a..2180482 100644
  }
  
 diff --git a/crates/ui-egui/src/previews.rs b/crates/ui-egui/src/previews.rs
-index 03b4291..e635fba 100644
+index 233a101..857362e 100644
 --- a/crates/ui-egui/src/previews.rs
 +++ b/crates/ui-egui/src/previews.rs
 @@ -12,6 +12,9 @@ use wordcraft_doc::{Block, Document, Paragraph, Table, para_block};
@@ -428,7 +402,7 @@ index 03b4291..e635fba 100644
  #[derive(Default)]
  pub struct Previews {
      tex: HashMap<String, TextureHandle>,
-@@ -92,7 +95,12 @@ impl Previews {
+@@ -103,7 +106,12 @@ impl Previews {
      /// A closure drawing a font-menu entry in its own face.
      pub fn font_preview_fn(&mut self) -> Box<dyn Fn(&mut Ui, &str) -> Response> {
          Box::new(|ui: &mut Ui, name: &str| {
@@ -443,10 +417,10 @@ index 03b4291..e635fba 100644
              let (r, resp) = ui.allocate_exact_size(vec2(260.0, crate::widgets::COMBO_PREVIEW_ROW_H), Sense::click());
              let t = Tokens::get(ui.ctx());
 diff --git a/crates/ui-egui/src/ribbon.rs b/crates/ui-egui/src/ribbon.rs
-index 6689adf..465f3e5 100644
+index cb1d7e9..5e0c1d2 100644
 --- a/crates/ui-egui/src/ribbon.rs
 +++ b/crates/ui-egui/src/ribbon.rs
-@@ -193,7 +193,17 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+@@ -264,7 +264,17 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                              ("viewing", tl!("Viewing — read or print, no changes"), app.session.viewing),
                          ];
                          for (mode, text, on) in choices {
@@ -465,7 +439,7 @@ index 6689adf..465f3e5 100644
                                  let _ = app.run("ui.mode", json!({"mode": mode}));
                                  ui.close();
                              }
-@@ -222,9 +232,10 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+@@ -293,9 +303,10 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
          // click elsewhere (or press Esc). The pin keeps it open.
          let top = tab_strip.response.rect.max.y;
          let width = tab_strip.response.rect.width();
@@ -479,7 +453,7 @@ index 6689adf..465f3e5 100644
                  ui.set_width(width);
                  frame.shadow(egui::epaint::Shadow { offset: [0, 3], blur: 10, spread: 0, color: egui::Color32::from_black_alpha(40) }).show(
                      ui,
-@@ -235,8 +246,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+@@ -306,8 +317,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                          corner_button(ui, app, "pin", tl!("Pin the ribbon (always show it)"));
                      },
                  );

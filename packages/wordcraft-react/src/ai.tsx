@@ -29,6 +29,9 @@ import {
   DEFAULT_STUDIO,
   activeSkills,
   applyLetterhead,
+  effectiveLetterhead,
+  sameLetterhead,
+  validLetterhead,
   applyPalette,
   paletteFor,
   parseSkillMarkdown,
@@ -62,8 +65,16 @@ export interface AiOptions {
   skills?: AiSkill[];
   /** Skill ids on until the person changes them. Default: `['humaniser']`. */
   defaultSkills?: string[];
-  /** Letterhead to start with until the person edits theirs (e.g. your organisation's). */
-  letterhead?: Letterhead;
+  /**
+   * Your organisation's letterhead. AI Studio's Letterhead page shows it, ready to apply; it is
+   * read on every render, so one that arrives or changes after the editor mounts shows at once.
+   * A person's own edits are kept as their override (with "Reset to organisation letterhead").
+   */
+  letterhead?: Letterhead | null;
+  /** Keep the organisation's letterhead as it is: its fields are read only, and only Apply and Remove are offered. */
+  letterheadLocked?: boolean;
+  /** Called after the letterhead is applied to the document (to log it, or save the document). */
+  onLetterheadApplied?: (letterhead: Letterhead) => void;
   /** Palettes to offer besides the built-in ones; the first is the default when given. */
   palettes?: Palette[];
   /** Show AI Studio's skills, letterhead and palette pages. Default: true. */
@@ -172,6 +183,8 @@ export interface AiBarProps {
   /** Distance from the bottom of the editor, clearing WordCraft's status bar. */
   bottom?: number;
   dark?: boolean;
+  /** The person may not change the text (viewers, commenters): answers can be read and copied, not inserted. */
+  readOnly?: boolean;
 }
 
 /** Is any source of answers set up: the app's, or the person's own key? */
@@ -182,14 +195,13 @@ export function aiReady(options: AiOptions): boolean {
 type StudioTab = 'skills' | 'letterhead' | 'palette' | 'model';
 
 /** The AI bar and its launcher. `<WordcraftEditor ai={...} />` renders it for you. */
-export function AiBar({ editor, options, open, onOpenChange, launcher = true, bottom = 30, dark }: AiBarProps) {
+export function AiBar({ editor, options, open, onOpenChange, launcher = true, bottom = 30, dark, readOnly = false }: AiBarProps) {
   const allowUserKey = options.allowUserKey ?? true;
   const showStudio = options.studio ?? true;
   const [own, setOwn] = useState<AiProviderConfig | null>(null);
   const [studio, setStudioState] = useState<AiStudioState>(() => ({
     ...DEFAULT_STUDIO,
     enabled: options.defaultSkills ?? DEFAULT_STUDIO.enabled,
-    letterhead: options.letterhead ?? null,
     palette: options.palettes?.[0]?.id ?? DEFAULT_STUDIO.palette,
   }));
   const [prompt, setPrompt] = useState('');
@@ -211,7 +223,6 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
     setStudioState(
       readStudio({
         enabled: options.defaultSkills ?? DEFAULT_STUDIO.enabled,
-        letterhead: options.letterhead ?? null,
         palette: options.palettes?.[0]?.id ?? DEFAULT_STUDIO.palette,
       }),
     );
@@ -232,6 +243,8 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
   const name = options.name ?? (active ? AI_PROVIDERS[active.provider].name.replace(/ \(.*\)$/, '') : 'AI');
   const skillsOn = useMemo(() => (showStudio ? activeSkills(studio, options.skills) : []), [studio, options.skills, showStudio]);
   const palette = paletteFor(studio, options.palettes);
+  // Like the palette, worked out on every render: the organisation's letterhead may arrive late.
+  const letterhead = effectiveLetterhead(studio, options.letterhead, options.letterheadLocked);
 
   const refreshSelection = useCallback(() => {
     if (editor && !editor.destroyed) setSelection(editor.getSelectedText().trim());
@@ -286,7 +299,7 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
         action,
         selection: sel,
         document: editor.getText(),
-        instructions: showStudio ? studioInstructions(skillsOn, studio.letterhead) : '',
+        instructions: showStudio ? studioInstructions(skillsOn, letterhead) : '',
         skills: skillsOn.map((s) => s.name),
         signal: ctl.signal,
       };
@@ -311,7 +324,7 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
   };
 
   const accept = (mode: 'replace' | 'below') => {
-    if (!editor || editor.destroyed || !result) return;
+    if (!editor || editor.destroyed || !result || readOnly) return;
     if (mode === 'below' && selection) {
       // Keep the selection and add the text after it, in a new paragraph.
       editor.execute('caret.right');
@@ -398,7 +411,15 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
         </header>
         <div className="wcai-studio-body">
           {tab === 'skills' && <SkillsPage studio={studio} setStudio={setStudio} extra={options.skills ?? []} />}
-          {tab === 'letterhead' && <LetterheadPage studio={studio} setStudio={setStudio} palette={palette} editor={editor} />}
+          {tab === 'letterhead' && <LetterheadPage
+              studio={studio}
+              setStudio={setStudio}
+              palette={palette}
+              editor={editor}
+              organisation={options.letterhead ?? null}
+              locked={!!options.letterheadLocked}
+              onApplied={options.onLetterheadApplied}
+            />}
           {tab === 'palette' && <PalettePage studio={studio} setStudio={setStudio} extra={options.palettes ?? []} editor={editor} />}
           {tab === 'model' && (
             <ModelPage
@@ -444,10 +465,16 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
         )}
         {result && !busy && (
           <div className="wcai-actions">
-            <button type="button" className="wcai-btn wcai-primary" onClick={() => accept('replace')}>
-              {selection ? 'Replace' : 'Insert'}
-            </button>
-            {selection && (
+            {readOnly ? (
+              <button type="button" className="wcai-btn wcai-primary" onClick={() => void navigator.clipboard?.writeText(result.trim())}>
+                Copy
+              </button>
+            ) : (
+              <button type="button" className="wcai-btn wcai-primary" onClick={() => accept('replace')}>
+                {selection ? 'Replace' : 'Insert'}
+              </button>
+            )}
+            {selection && !readOnly && (
               <button type="button" className="wcai-btn" onClick={() => accept('below')}>
                 Insert below
               </button>
@@ -464,7 +491,7 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
     );
   }
 
-  const status = [skillsOn.length ? skillsOn.map((s) => s.name).join(' · ') : '', studio.letterhead?.name ? `${studio.letterhead.name} letterhead` : '']
+  const status = [skillsOn.length ? skillsOn.map((s) => s.name).join(' · ') : '', letterhead?.name ? `${letterhead.name} letterhead` : '']
     .filter(Boolean)
     .join('  ·  ');
 
@@ -716,11 +743,39 @@ function SkillsPage({ studio, setStudio, extra }: { studio: AiStudioState; setSt
   );
 }
 
-function LetterheadPage({ studio, setStudio, palette, editor }: { studio: AiStudioState; setStudio: SetStudio; palette: Palette; editor: WordcraftEditor | null }) {
-  const lh: Letterhead = studio.letterhead ?? { name: '', align: 'left', rule: true };
+function LetterheadPage({
+  studio,
+  setStudio,
+  palette,
+  editor,
+  organisation,
+  locked,
+  onApplied,
+}: {
+  studio: AiStudioState;
+  setStudio: SetStudio;
+  palette: Palette;
+  editor: WordcraftEditor | null;
+  organisation: Letterhead | null;
+  locked: boolean;
+  onApplied?: (lh: Letterhead) => void;
+}) {
+  const effective = effectiveLetterhead(studio, organisation, locked);
+  const lh: Letterhead = effective ?? { name: '', align: 'left', rule: true };
+  const hasOrg = validLetterhead(organisation);
+  const overridden = !locked && !!studio.letterheadOverride && hasOrg && !sameLetterhead(studio.letterheadOverride, organisation);
   const [note, setNote] = useState('');
   const file = useRef<HTMLInputElement>(null);
-  const set = (patch: Partial<Letterhead>) => setStudio((s) => ({ ...s, letterhead: { ...lh, ...patch } }));
+  // An edit starts from the letterhead shown (the organisation's, say), so toggling the rule keeps
+  // its name, tagline, address and logo. An edit that lands back on the organisation's drops the
+  // override.
+  const set = (patch: Partial<Letterhead>) => {
+    if (locked) return;
+    setStudio((s) => {
+      const next = { ...(effectiveLetterhead(s, organisation) ?? lh), ...patch };
+      return { ...s, letterheadOverride: hasOrg && sameLetterhead(next, organisation) ? null : next };
+    });
+  };
   const onLogo = (e: ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     e.target.value = '';
@@ -738,6 +793,7 @@ function LetterheadPage({ studio, setStudio, palette, editor }: { studio: AiStud
     try {
       applyLetterhead(editor, lh, palette);
       setNote('Letterhead added to the header.');
+      onApplied?.(lh);
     } catch (e) {
       setNote(`Couldn’t add the letterhead: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -751,26 +807,26 @@ function LetterheadPage({ studio, setStudio, palette, editor }: { studio: AiStud
         <div className="wcai-form">
           <label className="wcai-field">
             Organisation or name
-            <input value={lh.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Open Studio Collective" />
+            <input readOnly={locked} value={lh.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Open Studio Collective" />
           </label>
           <label className="wcai-field">
             Tagline
-            <input value={lh.tagline ?? ''} onChange={(e) => set({ tagline: e.target.value })} placeholder="Optional" />
+            <input readOnly={locked} value={lh.tagline ?? ''} onChange={(e) => set({ tagline: e.target.value })} placeholder="Optional" />
           </label>
           <div className="wcai-grid2">
             <label className="wcai-field">
               Address
-              <input value={lh.address ?? ''} onChange={(e) => set({ address: e.target.value })} placeholder="12 Alder Street, Nairobi" />
+              <input readOnly={locked} value={lh.address ?? ''} onChange={(e) => set({ address: e.target.value })} placeholder="12 Alder Street, Nairobi" />
             </label>
             <label className="wcai-field">
               Contact
-              <input value={lh.contact ?? ''} onChange={(e) => set({ contact: e.target.value })} placeholder="hello@example.org · +254 700 000 000" />
+              <input readOnly={locked} value={lh.contact ?? ''} onChange={(e) => set({ contact: e.target.value })} placeholder="hello@example.org · +254 700 000 000" />
             </label>
           </div>
           <div className="wcai-grid2">
             <label className="wcai-field">
               Font
-              <input list="wcai-fonts" value={lh.font ?? ''} onChange={(e) => set({ font: e.target.value })} placeholder="Document font" />
+              <input readOnly={locked} list="wcai-fonts" value={lh.font ?? ''} onChange={(e) => set({ font: e.target.value })} placeholder="Document font" />
               <datalist id="wcai-fonts">
                 {LETTERHEAD_FONTS.map((f) => (
                   <option key={f} value={f} />
@@ -781,7 +837,7 @@ function LetterheadPage({ studio, setStudio, palette, editor }: { studio: AiStud
               Alignment
               <div className="wcai-segment" role="radiogroup" aria-label="Alignment">
                 {(['left', 'center', 'right'] as const).map((a) => (
-                  <button key={a} type="button" role="radio" aria-checked={(lh.align ?? 'left') === a} onClick={() => set({ align: a })}>
+                  <button key={a} type="button" role="radio" aria-checked={(lh.align ?? 'left') === a} disabled={locked} onClick={() => set({ align: a })}>
                     {a === 'center' ? 'Centre' : a[0].toUpperCase() + a.slice(1)}
                   </button>
                 ))}
@@ -789,16 +845,18 @@ function LetterheadPage({ studio, setStudio, palette, editor }: { studio: AiStud
             </div>
           </div>
           <div className="wcai-row">
-            <button type="button" className="wcai-btn" onClick={() => file.current?.click()}>
-              <Icon d={I.upload} size={18} /> {lh.logo ? 'Change logo' : 'Add logo'}
-            </button>
-            {lh.logo && (
+            {!locked && (
+              <button type="button" className="wcai-btn" onClick={() => file.current?.click()}>
+                <Icon d={I.upload} size={18} /> {lh.logo ? 'Change logo' : 'Add logo'}
+              </button>
+            )}
+            {lh.logo && !locked && (
               <button type="button" className="wcai-btn wcai-ghost" onClick={() => set({ logo: undefined })}>
                 Remove logo
               </button>
             )}
             <label className="wcai-check">
-              <input type="checkbox" checked={lh.rule !== false} onChange={(e) => set({ rule: e.target.checked })} /> Accent rule
+              <input type="checkbox" disabled={locked} checked={lh.rule !== false} onChange={(e) => set({ rule: e.target.checked })} /> Accent rule
             </label>
             <input ref={file} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onChange={onLogo} />
           </div>
@@ -823,9 +881,21 @@ function LetterheadPage({ studio, setStudio, palette, editor }: { studio: AiStud
       </div>
       <div className="wcai-actions wcai-between">
         <span className="wcai-note-inline" role="status">
-          {note}
+          {note || (locked ? 'Your organisation’s letterhead.' : overridden ? 'Your own version of the letterhead.' : hasOrg ? 'Your organisation’s letterhead.' : '')}
         </span>
         <span className="wcai-actions">
+          {overridden && (
+            <button
+              type="button"
+              className="wcai-btn wcai-ghost"
+              onClick={() => {
+                setStudio((st) => ({ ...st, letterheadOverride: null }));
+                setNote('Back to your organisation’s letterhead.');
+              }}
+            >
+              Reset to organisation letterhead
+            </button>
+          )}
           <button
             type="button"
             className="wcai-btn wcai-ghost"

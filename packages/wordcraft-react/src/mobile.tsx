@@ -315,6 +315,13 @@ export interface MobileShellProps {
   onAi?: () => void;
   /** Tell the editor component how much room the chrome takes, so the page sits between it. */
   onInsets: (top: number, bottom: number) => void;
+  /** The person's access level: viewers and commenters get no palette and no Edit button. */
+  permission?: 'view' | 'comment' | 'suggest' | 'edit';
+  /** Open the comments (a sheet over the page), with the number of open threads. */
+  onComments?: () => void;
+  openComments?: number;
+  /** How many other people are in the document. */
+  people?: number;
 }
 
 type Sheet = 'peek' | 'open' | 'closed';
@@ -322,7 +329,7 @@ type Sheet = 'peek' | 'open' | 'closed';
 const TITLE_H = 48;
 const PEEK_H = 48;
 
-export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommands, onVersions, onAi, onInsets }: MobileShellProps) {
+export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommands, onVersions, onAi, onInsets, permission = 'edit', onComments, openComments = 0, people = 0 }: MobileShellProps) {
   const [sheet, setSheet] = useState<Sheet>('peek');
   const [tab, setTab] = useState<MobileTabId>('Home');
   const [pages, setPages] = useState<PageId[]>([]);
@@ -343,7 +350,9 @@ export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommand
   const lastContextual = useRef<string>('');
   const clipboardText = useRef<string>('');
   const shy = options.shyChrome !== false;
-  const viewing = state.mode === 'viewing';
+  // Viewers and commenters can't change the text: no palette, and Edit isn't offered.
+  const viewing = state.mode === 'viewing' || permission === 'view' || permission === 'comment';
+  const locked = permission !== 'edit';
 
   // Read the formatting and view state after every change (once per frame at most).
   const refresh = useCallback(() => {
@@ -628,8 +637,15 @@ export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommand
             {options.onBack && <IconButton icon="back" label="Back" onPress={options.onBack} />}
             <div className="wcm-title" title={title}>
               {title}
+              {people > 0 && <span className="wcm-people">{people === 1 ? '1 other here' : `${people} others here`}</span>}
             </div>
-            {viewing ? (
+            {onComments && (
+              <button type="button" className="wcm-icon" aria-label={`Comments, ${openComments} open`} onPointerDown={keepFocus} onClick={onComments}>
+                <Icon name="comment" />
+                {openComments > 0 && <span className="wcm-badge">{openComments}</span>}
+              </button>
+            )}
+            {viewing && locked ? null : viewing ? (
               <button type="button" className="wcm-edit" onPointerDown={keepFocus} onClick={() => (editor.setMode('editing'), schedule())}>
                 <Icon name="edit" size={18} />
                 Edit
@@ -659,10 +675,11 @@ export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommand
             <MenuItem icon="wordCount" label="Word Count" onPress={() => (setMenu(false), doAction('wordCount'))} />
             {onVersions && <MenuItem icon="history" label="Version History" onPress={() => (setMenu(false), onVersions())} />}
             {onAi && !viewing && <MenuItem icon="sparkle" label="Write with AI" extra onPress={() => (setMenu(false), setSheet('peek'), onAi())} />}
-            <div className="wcm-menu-sep" />
-            {(['editing', 'reviewing', 'viewing'] as EditorMode[]).map((m) => (
-              <MenuItem key={m} icon={m === 'editing' ? 'edit' : m === 'reviewing' ? 'track' : 'markup'} label={modeLabel(m)} checked={state.mode === m} onPress={() => (setMenu(false), editor.setMode(m), schedule())} />
-            ))}
+            {!locked && <div className="wcm-menu-sep" />}
+            {!locked &&
+              (['editing', 'reviewing', 'viewing'] as EditorMode[]).map((m) => (
+                <MenuItem key={m} icon={m === 'editing' ? 'edit' : m === 'reviewing' ? 'track' : 'markup'} label={modeLabel(m)} checked={state.mode === m} onPress={() => (setMenu(false), editor.setMode(m), schedule())} />
+              ))}
           </div>
         </>
       )}
@@ -743,7 +760,9 @@ export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommand
                   <DrillPage id={pageId} state={state} editor={editor} run={run} done={() => setPages([])} openPage={openPage} />
                 ) : (
                   current.groups.map((g, gi) => {
-                    const items = g.filter((it) => !itemCommand(it) || !disabled(itemCommand(it)!, disabledCommands)).filter((it) => !(it.kind === 'action' && it.action === 'camera' && options.camera === false));
+                    const items = g
+                      .filter((it) => !locked || !((it.kind === 'page' && it.page === 'mode') || itemCommand(it) === 'review.trackChanges'))
+                      .filter((it) => !itemCommand(it) || !disabled(itemCommand(it)!, disabledCommands)).filter((it) => !(it.kind === 'action' && it.action === 'camera' && options.camera === false));
                     if (!items.length) return null;
                     return (
                       <div key={gi} className="wcm-group">
@@ -1372,7 +1391,9 @@ position:absolute;inset:0;z-index:5;pointer-events:none;font:16px/1.35 Roboto,"S
 .wcm button{font:inherit;color:inherit;-webkit-user-select:none;user-select:none;touch-action:manipulation}
 .wcm-top{pointer-events:auto;position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:2px;padding:0 4px;background:var(--bg);border-bottom:1px solid var(--line);transition:transform .2s cubic-bezier(.2,.8,.2,1);z-index:3}
 .wcm-top[data-hidden]{transform:translateY(-100%)}
-.wcm-title{flex:1;min-width:0;padding:0 8px;font-size:17px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcm-title{flex:1;min-width:0;padding:0 8px;font-size:17px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:grid;line-height:1.2}
+.wcm-people{font-size:11px;font-weight:400;color:var(--dim);overflow:hidden;text-overflow:ellipsis}
+.wcm-badge{position:absolute;top:7px;right:6px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--accent);color:var(--accent-fg);font-size:10px;font-weight:600;line-height:16px;text-align:center}
 .wcm-icon,.wcm-tool{flex:none;width:48px;height:48px;border:0;border-radius:24px;background:transparent;color:var(--icon);display:grid;place-items:center;cursor:pointer;position:relative}
 .wcm-icon:active,.wcm-tool:active{background:var(--press)}
 .wcm-icon[aria-pressed=true],.wcm-tool[aria-pressed=true]{background:var(--accent-soft);color:var(--accent)}
