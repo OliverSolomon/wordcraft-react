@@ -74,6 +74,22 @@ try {
     null,
     "Brian's selection in awareness",
   );
+  // Presence avatars at the bottom right: each sees the other within two seconds, and
+  // clicking one follows that person until you scroll yourself.
+  await a.page.waitForSelector('.wcws-avatar[title^="Brian Otieno"]', { timeout: 2000 });
+  await b.page.waitForSelector('.wcws-avatar[title^="Alice Achieng"]', { timeout: 2000 });
+  await a.page.click('.wcws-avatar[title^="Brian Otieno"]');
+  await until(a, () => window.wordcraft.selectionInfo()?.following === 'Brian Otieno', null, 'following Brian');
+  await a.page.mouse.move(650, 500);
+  await a.page.mouse.wheel(0, 300);
+  await until(a, () => window.wordcraft.selectionInfo()?.following === null, null, 'following stops when Alice scrolls');
+  // A comment travels with the document.
+  await b.page.evaluate(() => {
+    const p = window.wordcraft.paragraphs().find((x) => x.text.length > 5);
+    window.wordcraft.selectText(p.path, 0, 5);
+    window.wordcraft.execute('review.newComment', { text: 'Seen by both?' });
+  });
+  await until(a, () => window.wordcraft.comments().some((c) => c.text === 'Seen by both?' && c.author === 'Brian Otieno'), null, "Brian's comment");
   await a.page.waitForTimeout(1200);
   await a.page.screenshot({ path: 'collab-alice-sees-brian.png' });
   await b.page.screenshot({ path: 'collab-brian.png' });
