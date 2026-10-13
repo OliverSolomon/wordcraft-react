@@ -62,7 +62,11 @@ export interface AiStudioState {
   enabled: string[];
   /** Skills the person wrote or imported. */
   custom: AiSkill[];
-  letterhead: Letterhead | null;
+  /**
+   * The person's own letterhead, saved only once they changed something and it has a name. The
+   * organisation's (`ai.letterhead`) applies whenever there is none: see [`effectiveLetterhead`].
+   */
+  letterheadOverride: Letterhead | null;
   /** Id of the chosen palette. */
   palette: string;
   /** The person's own palette (id `custom`). */
@@ -134,19 +138,39 @@ export const BUILT_IN_PALETTES: Palette[] = [
   { id: 'mono', name: 'Monochrome', primary: '111111', secondary: '333333', accent: '777777', muted: '8A8A8A' },
 ];
 
-export const DEFAULT_STUDIO: AiStudioState = { enabled: ['humaniser'], custom: [], letterhead: null, palette: 'office' };
+export const DEFAULT_STUDIO: AiStudioState = { enabled: ['humaniser'], custom: [], letterheadOverride: null, palette: 'office' };
+
+/** A letterhead worth keeping or applying: one with a name. */
+export function validLetterhead(lh: unknown): lh is Letterhead {
+  return !!lh && typeof lh === 'object' && typeof (lh as Letterhead).name === 'string' && (lh as Letterhead).name.trim().length > 0;
+}
+
+/** The letterhead in force: the person's override, else the organisation's, else none. */
+export function effectiveLetterhead(state: Pick<AiStudioState, 'letterheadOverride'>, organisation?: Letterhead | null, locked = false): Letterhead | null {
+  if (locked) return validLetterhead(organisation) ? organisation : null;
+  return state.letterheadOverride ?? (validLetterhead(organisation) ? organisation : null);
+}
+
+/** Two letterheads with the same fields (a host may pass a new object with the same values). */
+export function sameLetterhead(a: Letterhead | null | undefined, b: Letterhead | null | undefined): boolean {
+  const key = (l: Letterhead | null | undefined) => (l ? JSON.stringify([l.name, l.tagline, l.address, l.contact, l.logo, l.logoWidth, l.align, l.font, l.rule]) : '');
+  return key(a) === key(b);
+}
 
 const KEY = 'wordcraft.ai.studio';
 
 export function readStudio(defaults: Partial<AiStudioState> = {}): AiStudioState {
   const base: AiStudioState = { ...DEFAULT_STUDIO, ...defaults };
   try {
-    const v = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Partial<AiStudioState> | null;
+    const v = JSON.parse(localStorage.getItem(KEY) ?? 'null') as (Partial<AiStudioState> & { letterhead?: unknown }) | null;
     if (!v || typeof v !== 'object') return base;
+    // Older versions kept one `letterhead` (often an empty one saved by a toggle): only a named
+    // one carries over, as the person's override.
+    const override = validLetterhead(v.letterheadOverride) ? v.letterheadOverride : validLetterhead(v.letterhead) ? v.letterhead : null;
     return {
       enabled: Array.isArray(v.enabled) ? v.enabled.filter((x) => typeof x === 'string') : base.enabled,
       custom: Array.isArray(v.custom) ? v.custom.filter((s) => s && typeof s.id === 'string' && typeof s.instructions === 'string') : [],
-      letterhead: v.letterhead && typeof v.letterhead.name === 'string' ? v.letterhead : base.letterhead,
+      letterheadOverride: override ?? base.letterheadOverride,
       palette: typeof v.palette === 'string' ? v.palette : base.palette,
       customPalette: v.customPalette,
     };
@@ -157,7 +181,9 @@ export function readStudio(defaults: Partial<AiStudioState> = {}): AiStudioState
 
 export function writeStudio(state: AiStudioState): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(state));
+    // A nameless letterhead is never saved, so it can't hide the organisation's for good.
+    const keep = { ...state, letterheadOverride: validLetterhead(state.letterheadOverride) ? state.letterheadOverride : null };
+    localStorage.setItem(KEY, JSON.stringify(keep));
   } catch {
     // storage unavailable or full (a large logo): the settings last for this visit
   }
