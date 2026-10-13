@@ -14,7 +14,7 @@ use wordcraft_engine::Session;
 use wordcraft_ui_egui::{Inbox, Services, UiState, WordApp};
 
 use crate::collab::{CollabState, Peer, parse_color};
-use crate::doc_tools::{Mark, comments_json, marks_at, paragraphs_json, parse_marks, pos_at};
+use crate::doc_tools::{Mark, body_offset, comments_json, marks_at, paragraphs_json, parse_marks, pos_at};
 use crate::touch_web::TouchState;
 use crate::{MountOptions, autosave_name, document_fonts, merge_json, mime_for};
 
@@ -1093,6 +1093,16 @@ impl WordcraftHandle {
             app.run("select.range", json!({"anchor": a, "focus": b}))?;
             app.canvas.scroll_to_caret = true;
             Ok(())
+        })
+    }
+
+    /// The selection as the panels count it: `{anchor: {path, offset} | null, focus: …}`
+    /// (UTF-16 offsets in the paragraph's text; null outside the body).
+    pub fn caret(&self) -> Result<String, JsValue> {
+        self.with_app(|app| {
+            let doc = &app.session.doc;
+            let sel = &app.session.sel;
+            Ok(json!({"anchor": body_offset(doc, &sel.anchor), "focus": body_offset(doc, &sel.focus)}).to_string())
         })
     }
 

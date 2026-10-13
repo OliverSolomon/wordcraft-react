@@ -8,7 +8,7 @@
  * for them. For your organisation's key, keep it on your server and pass `complete` instead.
  */
 import type { AiRequest } from './ai-core.js';
-import { describeAiRequest } from './ai-core.js';
+import { BLOCKS_PROMPT, CHAT_SYSTEM_PROMPT, CHECK_SYSTEM_PROMPT, STRUCTURE_SYSTEM_PROMPT, describeAiRequest } from './ai-core.js';
 
 export type AiProviderId = 'openrouter' | 'openai' | 'anthropic' | 'gemini' | 'custom';
 
@@ -35,16 +35,32 @@ export const AI_SYSTEM_PROMPT =
 const MAX_CONTEXT = 24_000;
 
 /** The system prompt for a request: the base prompt plus AI Studio's skills and context. */
-export function aiSystemPrompt(r: Pick<AiRequest, 'instructions'>): string {
-  return r.instructions?.trim() ? `${AI_SYSTEM_PROMPT}\n\nFollow these writing instructions:\n${r.instructions.trim()}` : AI_SYSTEM_PROMPT;
+export function aiSystemPrompt(r: Pick<AiRequest, 'instructions'> & { action?: AiRequest['action']; goals?: AiRequest['goals'] }): string {
+  const base =
+    r.action === 'ask'
+      ? CHAT_SYSTEM_PROMPT
+      : r.action === 'structure'
+        ? `${STRUCTURE_SYSTEM_PROMPT}\n\n${BLOCKS_PROMPT}`
+        : r.action === 'check'
+          ? `${CHECK_SYSTEM_PROMPT}${r.goals && Object.keys(r.goals).length ? `\nWriting goals: ${Object.entries(r.goals).map(([k, v]) => `${k}: ${v}`).join('; ')}.` : ''}`
+          : AI_SYSTEM_PROMPT;
+  // Checks are about the writer's own words: writing skills would change what counts as a problem.
+  if (r.action === 'check') return base;
+  return r.instructions?.trim() ? `${base}\n\nFollow these writing instructions:\n${r.instructions.trim()}` : base;
 }
 
 /** The user message for a request: the document (trimmed), the selection and the task. */
 export function aiUserMessage(r: Omit<AiRequest, 'signal' | 'instructions' | 'skills'>): string {
   const doc = r.document.length > MAX_CONTEXT ? r.document.slice(-MAX_CONTEXT) : r.document;
+  if (r.action === 'check') return describeAiRequest(r);
+  if (r.action === 'ask') {
+    const past = (r.history ?? []).slice(-6).map((m) => `${m.role === 'user' ? 'Q' : 'A'}: ${m.content}`).join('\n');
+    return [`Passages:\n${doc}`, past ? `Conversation so far:\n${past}` : '', r.selection ? `Selected text:\n<selection>\n${r.selection}\n</selection>` : '', describeAiRequest(r)].filter(Boolean).join('\n\n');
+  }
   return [
     `Document so far:\n<document>\n${doc}\n</document>`,
     r.selection ? `Selected text:\n<selection>\n${r.selection}\n</selection>` : '',
+    r.data ? `Data (take every value from it exactly):\n<data>\n${r.data.slice(0, 20_000)}\n</data>` : '',
     `Task: ${describeAiRequest(r)}`,
   ]
     .filter(Boolean)
@@ -108,7 +124,7 @@ export function completeWith(cfg: AiProviderConfig, request: AiRequest): AsyncIt
           'anthropic-dangerous-direct-browser-access': 'true',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ model, max_tokens: 1500, stream: true, system, messages: [{ role: 'user', content: user }] }),
+        body: JSON.stringify({ model, max_tokens: 4000, stream: true, system, messages: [{ role: 'user', content: user }] }),
       });
       yield* sse(res, (ev) => (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' ? ev.delta.text : undefined));
     })();

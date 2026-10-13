@@ -86,6 +86,18 @@ pub fn pos_at(doc: &Document, path: &[u32], u: usize) -> Option<Pos> {
     Some(Pos::new(StoryRef::Body, Path(path.to_vec()), PlainMap::new(p).byte(u)))
 }
 
+/// Where a position is, as the panels count it: `{path, offset}` (UTF-16 in the paragraph's
+/// text), or `null` outside the body (a header, a footnote, a text box).
+pub fn body_offset(doc: &Document, at: &Pos) -> Value {
+    if at.story != StoryRef::Body {
+        return Value::Null;
+    }
+    match doc.para_at(at) {
+        Some(p) => json!({"path": at.path.0, "offset": PlainMap::new(p).utf16(at.off)}),
+        None => Value::Null,
+    }
+}
+
 /// `[{path, text, style, styleName, heading}]` for every body paragraph (`heading`: the outline
 /// level 1 to 9 of a heading style, else 0).
 pub fn paragraphs_json(doc: &Document) -> Value {
