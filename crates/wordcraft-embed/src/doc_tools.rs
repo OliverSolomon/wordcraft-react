@@ -49,7 +49,13 @@ impl PlainMap {
         let mut k = 0;
         for (byte, c) in p.text.char_indices() {
             if c == OBJ {
-                let shown = p.objects.get(k).map(InlineObject::plain_text).unwrap_or("");
+                // A picture, chart or shape is one U+FFFC, so the place before it can be selected;
+                // a field or an equation shows its text; anything else (comment anchors) is empty.
+                let shown = match p.objects.get(k) {
+                    Some(o) if o.is_drawing() => "\u{FFFC}",
+                    Some(o) => o.plain_text(),
+                    None => "",
+                };
                 for u in shown.chars() {
                     text.push(u);
                     offsets.extend(std::iter::repeat_n(byte, u.len_utf16()));
@@ -84,6 +90,44 @@ pub fn para_at<'a>(doc: &'a Document, path: &[u32]) -> Option<&'a Paragraph> {
 pub fn pos_at(doc: &Document, path: &[u32], u: usize) -> Option<Pos> {
     let p = para_at(doc, path)?;
     Some(Pos::new(StoryRef::Body, Path(path.to_vec()), PlainMap::new(p).byte(u)))
+}
+
+/// Where a position is, as the panels count it: `{path, offset}` (UTF-16 in the paragraph's
+/// text), or `null` outside the body (a header, a footnote, a text box).
+pub fn body_offset(doc: &Document, at: &Pos) -> Value {
+    if at.story != StoryRef::Body {
+        return Value::Null;
+    }
+    match doc.para_at(at) {
+        Some(p) => json!({"path": at.path.0, "offset": PlainMap::new(p).utf16(at.off)}),
+        None => Value::Null,
+    }
+}
+
+/// The picture, chart or shape the selection holds (or the one just before the caret):
+/// `{kind, alt, title}`, or `null`. Read only: nothing in the document changes.
+pub fn selected_object(doc: &Document, anchor: &Pos, focus: &Pos) -> Value {
+    let (a, b) = if (anchor.path.0.as_slice(), anchor.off) <= (focus.path.0.as_slice(), focus.off) { (anchor, focus) } else { (focus, anchor) };
+    if a.story != b.story || a.path != b.path {
+        return Value::Null;
+    }
+    let Some(p) = doc.para(a.story, &a.path) else { return Value::Null };
+    for off in p.object_offsets() {
+        let inside = if a.off == b.off { off + wordcraft_doc::para::OBJ.len_utf8() == a.off } else { off >= a.off && off < b.off };
+        if !inside {
+            continue;
+        }
+        if let Some(o) = p.object_at(off).filter(|o| o.is_drawing()) {
+            let kind = match o {
+                wordcraft_doc::para::InlineObject::Image { .. } => "picture",
+                wordcraft_doc::para::InlineObject::Graphic { .. } => "chart",
+                _ => "shape",
+            };
+            let title = o.frame().map(|(_, _, f)| f.alt.title.clone()).unwrap_or_default();
+            return json!({"kind": kind, "alt": o.alt_text(), "title": title});
+        }
+    }
+    Value::Null
 }
 
 /// `[{path, text, style, styleName, heading}]` for every body paragraph (`heading`: the outline
@@ -239,6 +283,26 @@ mod tests {
         let mut d = Document::from_text(&paras.join("\n"));
         d.body.truncate(paras.len());
         d
+    }
+
+    #[test]
+    fn a_picture_is_one_character_and_can_be_selected() {
+        let mut s = wordcraft_engine::Session::new(doc(&["ab"]));
+        s.run("select.range", &json!({"anchor": Pos::new(StoryRef::Body, Path(vec![0]), 1), "focus": Pos::new(StoryRef::Body, Path(vec![0]), 1)}))
+            .unwrap();
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        s.run("insert.picture", &json!({"data": png, "alt": "dot"})).unwrap();
+        s.run("object.altText", &json!({"title": "mermaid:graph TD"})).unwrap();
+        let list = paragraphs_json(&s.doc);
+        assert_eq!(list[0]["text"], "a\u{FFFC}b");
+        // UTF-16 1..2 is the picture: selecting it finds it, with its title.
+        let a = pos_at(&s.doc, &[0], 1).unwrap();
+        let b = pos_at(&s.doc, &[0], 2).unwrap();
+        let o = selected_object(&s.doc, &a, &b);
+        assert_eq!(o["kind"], "picture");
+        assert_eq!(o["title"], "mermaid:graph TD");
+        assert_eq!(body_offset(&s.doc, &b)["offset"], 2);
+        assert!(selected_object(&s.doc, &pos_at(&s.doc, &[0], 0).unwrap(), &a).is_null());
     }
 
     #[test]

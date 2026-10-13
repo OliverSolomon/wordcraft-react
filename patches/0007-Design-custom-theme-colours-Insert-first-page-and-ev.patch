@@ -1,0 +1,231 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliver Solomon <47696354+OliverSolomon@users.noreply.github.com>
+Date: Tue, 13 Oct 2026 18:25:15 +0000
+Subject: [PATCH 7/7] Design: custom theme colours; Insert: first-page and
+ even-page headers and footers
+
+---
+ .prepared                       |  1 +
+ crates/engine/src/cmd/design.rs | 69 +++++++++++++++++++++++++---
+ crates/engine/src/cmd/insert.rs | 80 +++++++++++++++++++++++++++++----
+ 3 files changed, 135 insertions(+), 15 deletions(-)
+ create mode 100644 .prepared
+
+diff --git a/.prepared b/.prepared
+new file mode 100644
+index 0000000..4161c20
+--- /dev/null
++++ b/.prepared
+@@ -0,0 +1 @@
++159b84f54c74e9e82fb3109b758ae7dd6f4e3ab0 159b84f54c74e9e82fb3109b758ae7dd6f4e3ab0 59ab26d50903cee9
+diff --git a/crates/engine/src/cmd/design.rs b/crates/engine/src/cmd/design.rs
+index 7d96fe8..1e92cb5 100644
+--- a/crates/engine/src/cmd/design.rs
++++ b/crates/engine/src/cmd/design.rs
+@@ -57,12 +57,9 @@ pub fn specs() -> Vec<CommandSpec> {
+             sel_result(s)
+         })
+         .params(r#"{"heading": string, "body"?: string}"#),
+-        CommandSpec::new("design.themeColors", "Colors", "Design › Document Formatting", |s, v| {
+-            let name = p::req_str(v, "name")?;
+-            let t = THEMES.iter().find(|t| t.0.eq_ignore_ascii_case(name)).ok_or_else(|| CmdError::Params(format!("unknown colours `{name}`")))?;
+-            set_accent(s, t.3[0]);
+-            sel_result(s)
+-        }),
++        CommandSpec::new("design.themeColors", "Colors", "Design › Document Formatting", theme_colors).params(
++            r#"{"name"?: string, "colors"?: {"dk1"|"lt1"|"dk2"|"lt2"|"accent1"…"accent6"|"hlink"|"folHlink": "RRGGBB"}} (a built-in name, or custom colours under that name: written to the document theme, and accent1 colours the headings)"#,
++        ),
+         CommandSpec::new("design.styleSet", "Style Set", "Design › Document Formatting", style_set)
+             .params(r#"{"name": "default|basic|lines|shaded|casual|centered|minimalist|title"}"#),
+         CommandSpec::new("design.paragraphSpacing", "Paragraph Spacing", "Design › Document Formatting", para_spacing)
+@@ -89,6 +86,43 @@ pub fn specs() -> Vec<CommandSpec> {
+     ]
+ }
+ 
++const SCHEME: [&str; 12] = ["dk1", "lt1", "dk2", "lt2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"];
++
++/// Design › Colors: a built-in colour set by name, or a custom one (`colors`) kept in the theme.
++fn theme_colors(s: &mut Session, v: &Value) -> CmdResult {
++    let Some(custom) = v.get("colors").and_then(Value::as_object) else {
++        let name = p::req_str(v, "name")?;
++        let t = THEMES.iter().find(|t| t.0.eq_ignore_ascii_case(name)).ok_or_else(|| CmdError::Params(format!("unknown colours `{name}`")))?;
++        set_accent(s, t.3[0]);
++        return sel_result(s);
++    };
++    let mut colors = s.doc.settings.theme_colors.clone();
++    for (i, d) in wordcraft_doc::THEME_COLORS.iter().enumerate() {
++        if colors.get(i).is_none() {
++            colors.push(*d);
++        }
++    }
++    let mut accent = None;
++    for (key, val) in custom {
++        let i = SCHEME.iter().position(|n| n.eq_ignore_ascii_case(key)).ok_or_else(|| CmdError::Params(format!("unknown theme colour `{key}`")))?;
++        let c = val.as_str().and_then(Rgb::parse).ok_or_else(|| CmdError::Params(format!("`{key}` is not a colour")))?;
++        if let Some(x) = colors.get_mut(i) {
++            *x = c;
++        }
++        if i == 4 {
++            accent = Some(c);
++        }
++    }
++    s.doc.settings.theme_colors = colors;
++    if let Some(name) = p::str(v, "name") {
++        s.doc.settings.theme_name = name.chars().take(64).collect();
++    }
++    if let Some(a) = accent {
++        set_accent(s, a);
++    }
++    sel_result(s)
++}
++
+ fn set_fonts(s: &mut Session, heading: &str, body: &str) {
+     s.doc.settings.major_font = heading.into();
+     s.doc.settings.minor_font = body.into();
+@@ -236,3 +270,26 @@ fn page_borders(s: &mut Session, v: &Value) -> CmdResult {
+     }
+     sel_result(s)
+ }
++
++#[cfg(test)]
++mod tests {
++    use serde_json::json;
++    use wordcraft_doc::props::Rgb;
++
++    use crate::Session;
++
++    #[test]
++    fn custom_theme_colors_reach_the_theme_and_the_headings() {
++        let mut s = Session::new(wordcraft_doc::Document::default());
++        s.run("design.themeColors", &json!({"name": "From logo", "colors": {"accent1": "1A5C8A", "accent2": "E07A1F", "hlink": "0B6E99"}})).unwrap();
++        let t = &s.doc.settings.theme_colors;
++        assert_eq!(t.get(4), Some(&Rgb(0x1A, 0x5C, 0x8A)));
++        assert_eq!(t.get(5), Some(&Rgb(0xE0, 0x7A, 0x1F)));
++        assert_eq!(t.get(10), Some(&Rgb(0x0B, 0x6E, 0x99)));
++        assert_eq!(s.doc.settings.theme_name, "From logo");
++        let back = wordcraft_docx::read(&wordcraft_docx::write(&s.doc).unwrap()).unwrap();
++        assert_eq!(back.settings.theme_colors.get(4), Some(&Rgb(0x1A, 0x5C, 0x8A)));
++        assert!(s.run("design.themeColors", &json!({"colors": {"nope": "000000"}})).is_err());
++        assert!(s.run("design.themeColors", &json!({"colors": {"accent1": "not a colour"}})).is_err());
++    }
++}
+diff --git a/crates/engine/src/cmd/insert.rs b/crates/engine/src/cmd/insert.rs
+index 1bc36b0..1c31311 100644
+--- a/crates/engine/src/cmd/insert.rs
++++ b/crates/engine/src/cmd/insert.rs
+@@ -47,8 +47,12 @@ pub fn specs() -> Vec<CommandSpec> {
+         CommandSpec::new("insert.header", "Header", "Insert › Header & Footer", |s, v| header_footer(s, v, true)).params(r#"{"text"?: string, "preset"?: "blank|blankThree|title"}"#),
+         CommandSpec::new("insert.footer", "Footer", "Insert › Header & Footer", |s, v| header_footer(s, v, false)).params(r#"{"text"?: string, "preset"?: "blank|blankThree|pageNumber"}"#),
+         CommandSpec::new("insert.pageNumber", "Page Number", "Insert › Header & Footer", page_number).params(r#"{"position"?: "top|bottom|current", "align"?: "left|center|right", "format"?: "x of y"}"#),
+-        CommandSpec::new("insert.editHeader", "Edit Header", "Insert › Header & Footer › Header", |s, _| edit_hf(s, true)).pure(),
+-        CommandSpec::new("insert.editFooter", "Edit Footer", "Insert › Header & Footer › Footer", |s, _| edit_hf(s, false)).pure(),
++        CommandSpec::new("insert.editHeader", "Edit Header", "Insert › Header & Footer › Header", |s, v| edit_hf(s, true, v))
++            .params(r#"{"kind"?: "default|first|even"} (first: the first page's header, turning on Different First Page; even: even pages', turning on Different Odd & Even Pages)"#)
++            .pure(),
++        CommandSpec::new("insert.editFooter", "Edit Footer", "Insert › Header & Footer › Footer", |s, v| edit_hf(s, false, v))
++            .params(r#"{"kind"?: "default|first|even"}"#)
++            .pure(),
+         CommandSpec::new("insert.closeHeader", "Close Header and Footer", "Header & Footer", |s, _| {
+             s.sel = Selection::caret(s.doc.start_of(StoryRef::Body));
+             sel_result(s)
+@@ -394,19 +398,54 @@ fn bookmark(s: &mut Session, v: &Value) -> CmdResult {
+ }
+ 
+ fn hf_part(s: &mut Session, header: bool) -> u32 {
++    hf_part_kind(s, header, HfKind::Default)
++}
++
++/// Which of a section's headers (or footers): the default one, the first page's or even pages'.
++#[derive(Clone, Copy, PartialEq, Eq)]
++enum HfKind {
++    Default,
++    First,
++    Even,
++}
++
++impl HfKind {
++    fn parse(v: &Value) -> Result<HfKind, CmdError> {
++        match p::str(v, "kind").unwrap_or("default") {
++            "default" | "primary" | "odd" => Ok(HfKind::Default),
++            "first" => Ok(HfKind::First),
++            "even" => Ok(HfKind::Even),
++            x => Err(CmdError::Params(format!("unknown `kind` `{x}` (default, first or even)"))),
++        }
++    }
++}
++
++fn hf_part_kind(s: &mut Session, header: bool, kind: HfKind) -> u32 {
+     let block = s.sel.focus.path.0.first().copied().unwrap_or(0) as usize;
+     let sect = s.doc.section_mut(block).clone();
+-    let existing = if header { sect.headers.default } else { sect.footers.default };
++    let set = if header { sect.headers } else { sect.footers };
++    let existing = match kind {
++        HfKind::Default => set.default,
++        HfKind::First => set.first,
++        HfKind::Even => set.even,
++    };
+     if let Some(id) = existing.filter(|id| s.doc.parts.contains_key(id)) {
+         return id;
+     }
+     let style = if header { "Header" } else { "Footer" };
+     let id = s.doc.add_part(if header { PartKind::Header } else { PartKind::Footer }, vec![para_block(Paragraph::new().styled(style))]);
+     let sect = s.doc.section_mut(block);
+-    if header {
+-        sect.headers.default = Some(id);
+-    } else {
+-        sect.footers.default = Some(id);
++    let set = if header { &mut sect.headers } else { &mut sect.footers };
++    match kind {
++        HfKind::Default => set.default = Some(id),
++        HfKind::First => {
++            set.first = Some(id);
++            sect.title_page = true;
++        }
++        HfKind::Even => {
++            set.even = Some(id);
++            s.doc.settings.even_odd_headers = true;
++        }
+     }
+     id
+ }
+@@ -445,8 +484,8 @@ fn header_footer(s: &mut Session, v: &Value, header: bool) -> CmdResult {
+     Ok(json!({"story": id}))
+ }
+ 
+-fn edit_hf(s: &mut Session, header: bool) -> CmdResult {
+-    let id = hf_part(s, header);
++fn edit_hf(s: &mut Session, header: bool, v: &Value) -> CmdResult {
++    let id = hf_part_kind(s, header, HfKind::parse(v)?);
+     s.touch();
+     s.sel = Selection::caret(s.doc.end_of(StoryRef::Part(id)));
+     Ok(json!({"story": id}))
+@@ -684,3 +723,26 @@ mod tests {
+         assert_eq!(date_picture("DATE"), None);
+     }
+ }
++
++#[cfg(test)]
++mod header_kind_tests {
++    use serde_json::json;
++
++    use crate::Session;
++
++    #[test]
++    fn first_and_even_headers() {
++        let mut s = Session::new(wordcraft_doc::Document::default());
++        s.run("insert.editHeader", &json!({"kind": "first"})).unwrap();
++        s.run("text.insert", &json!({"text": "Cover"})).unwrap();
++        s.run("insert.closeHeader", &json!({})).unwrap();
++        let sect = s.doc.section_mut(0).clone();
++        assert!(sect.title_page);
++        assert!(sect.headers.first.is_some());
++        assert!(sect.headers.default.is_none());
++        s.run("insert.editFooter", &json!({"kind": "even"})).unwrap();
++        s.run("insert.closeHeader", &json!({})).unwrap();
++        assert!(s.doc.settings.even_odd_headers);
++        assert!(s.run("insert.editHeader", &json!({"kind": "sideways"})).is_err());
++    }
++}
+-- 
+2.43.0
+

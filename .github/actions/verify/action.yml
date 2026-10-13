@@ -37,6 +37,7 @@ runs:
         WORDCRAFT_FAKE_AI=1 npm run smoke -- http://localhost:3000/
         npm run smoke:mobile -- http://localhost:3000
         npm run smoke:features -- http://localhost:3000
+        npm run smoke:extras -- http://localhost:3000
     - name: Co-editing smoke test (two browsers through y-websocket)
       shell: bash
       working-directory: examples/nextjs

@@ -60,6 +60,11 @@ A complete example app lives in [`examples/nextjs`](examples/nextjs). The docume
 | `permission` | `'view' \| 'comment' \| 'suggest' \| 'edit'` | What this person may do, enforced by the editor and changeable at runtime. See [Access levels](#access-levels). `allowCopy` and `commentsVisibleToViewers` refine it. |
 | `comments` ✦ Extra | `CommentsOptions` or `true` | Google Docs style comments: a panel with filters, replies, `@mentions`, Assign to, and a store adapter. See [Comments](#comments). `commentsOpen` and `onCommentsOpenChange` control the panel. |
 | `presence` | `boolean` | Show who else is here (avatars with follow) at the bottom right while co-editing. Default true. |
+| `checks` ✦ Extra | `WritingChecksOptions` or `true` | Writing checks like Grammarly: underlines by category, a card with fixes, a panel with a score, readability and tone. See [Writing checks](#writing-checks-extra). |
+| `originality` ✦ Extra | `OriginalityOptions` | Similarity against your own documents, a plagiarism service and a soft AI-writing signal. See [Originality](#originality-extra). |
+| `tools` ✦ Extra | `ToolsOptions` | Outline with drag to reorder, accessibility, sources and bibliography, word count with a goal, voice typing, translation. See [Tools](#tools-extra). |
+| `sensitive` | `boolean` | A sensitive document (case notes, survivor information): writing checks, originality and document chat are off and nothing is sent anywhere. |
+| `panel`, `onPanelChange` | `PanelId \| null` | Open one of the Extras' panels yourself: `chat`, `checks`, `originality`, `outline`, `accessibility`, `sources`, `count`, `translate`. |
 | `mobileOptions` | `MobileOptions` | `{ mobileView?, title?, onBack?, onShare?, camera?, dictation?, shyChrome? }` for the phone layout. |
 | `collaboration` | | Real-time co-editing, e.g. `yjsCollaboration({ doc, provider })`. See [Co-editing](#co-editing). |
 | `dark`, `prefs` | | UI preferences, applied live: ribbon `tab`, `dark`, `darkPage`, `language`, `showDiscord`. |
@@ -103,6 +108,8 @@ editor.comments();                // [{ id, parent, author, date, resolved, text
 editor.selectText([3], 0, 12);    // select by paragraph path and UTF-16 offsets, and scroll to it
 editor.setMarks([{ id, path, start, end, color, style: 'squiggle' }]);  // underline or highlight text
 editor.followPeer('Ada Lovelace'); // keep a co-editor's caret in view (null stops)
+editor.caret();                   // { anchor: { path, offset }, focus: { path, offset } } as paragraphs() counts
+editor.selectedObject();          // the selected picture, chart or shape: { kind, alt, title }, or null
 editor.destroy();
 ```
 
@@ -221,6 +228,12 @@ Everything in this package matches Word and WordCraft, except features marked **
 - ✦ **Version history** in the style of Google Docs ([Version history](#version-history-extra)). Word has version history for files in OneDrive; WordCraft has none.
 - ✦ **Comments panel, mentions and a comment store** ([Comments](#comments)), as in Google Docs. The comments themselves are WordCraft's, Word style.
 - ✦ **The phone layout and touch gestures** ([Phones and tablets](#phones-and-tablets)), with dictation and camera photos. Word has these in its phone app; WordCraft is desktop and browser only.
+- ✦ **AI that builds structure:** tables, diagrams, charts, checklists, callouts, equations, QR codes, images and tables of contents, and a `/` slash menu ([AI that builds structure](#ai-that-builds-structure-extra)).
+- ✦ **A theme from a logo or photo, and logo placement** ([Brand theme and logo placement](#brand-theme-and-logo-placement-extra)).
+- ✦ **Ask this document**, a chat grounded in the document with citations ([Document chat](#document-chat-extra)).
+- ✦ **Writing checks** in the manner of Grammarly ([Writing checks](#writing-checks-extra)). Word has its own Editor pane; this adds goals, readability, tone and pluggable engines.
+- ✦ **Originality:** your own documents, a plagiarism service and a soft AI-writing signal ([Originality](#originality-extra)).
+- ✦ **Tools:** an outline with drag to reorder, an accessibility panel, sources, word count with a goal, voice typing and translation ([Tools](#tools-extra)). Word has most of these in its own places; these are side panels for the web.
 
 The full list of differences from WordCraft, Extras or not, is in [docs/DIVERGENCES.md](docs/DIVERGENCES.md).
 
@@ -238,7 +251,7 @@ The sliders button in the prompt box opens AI Studio. Its settings stay in the p
 
 - **Skills:** writing instructions added to every request. The **Humaniser** is on by default. It asks for natural, human-sounding prose with varied rhythm, plain words, no stock AI phrases and no em dashes. Built-in skills also include Plain English, Concise, Persuasive, Academic, Warm & friendly and British English. People can write their own skill or import a `SKILL.md` (front matter `name` and `description`, then the instructions). Your app can add skills with `ai.skills` and choose which are on with `ai.defaultSkills`.
 - **Letterhead:** organisation name, tagline, address, contact line, logo, font, alignment and an accent rule, with a live preview. *Apply to document* writes it into the document header. The AI also gets these details as context for letters and emails. Your app supplies the organisation's letterhead with `ai.letterhead`; it is read live, so one that loads after the editor shows at once and a changed one replaces it. A person's own edits are kept separately in their browser (only once they have a name), with *Reset to organisation letterhead* to go back. `ai.letterheadLocked: true` keeps the official letterhead untouched (read-only fields, only Apply and Remove), and `ai.onLetterheadApplied(letterhead)` tells your app when it was applied, to log it or save the document.
-- **Palette:** eight brand palettes and a custom one. *Apply to headings* recolours the title and Heading 1 to 3, and the letterhead uses the same colours. Your app can add palettes with `ai.palettes`.
+- **Palette:** eight brand palettes, a custom one, and palettes made **from a logo or photo**. *Apply to document* writes it as the document theme; *Apply to headings* recolours only the title and headings. The letterhead uses the same colours. Your app can add palettes with `ai.palettes`. See [Brand theme and logo placement](#brand-theme-and-logo-placement-extra).
 - **Model:** the provider, API key, model and endpoint (see below).
 
 ### Where answers come from
@@ -274,7 +287,94 @@ The first of these that is set up is used:
 
 `request` has `prompt`, `action`, `selection`, `document`, and `instructions` (the skills that are on, and the letterhead). On your server, pass the request to `aiSystemPrompt(request)` from `@gamine/wordcraft-react/core` to build the system prompt with those instructions, and to `describeAiRequest(request)` to turn a quick action into a task for your model. `completeWith(providerConfig, request)` streams from any supported provider, and works in an API route too. [`examples/nextjs/app/api/ai/route.ts`](examples/nextjs/app/api/ai/route.ts) streams Claude using `ANTHROPIC_API_KEY`.
 
+Requests also carry `history` (document chat), `goals` (writing checks), `language` (translation) and `data` (structured output from a table), and `action` can be `ask`, `structure`, `check` or `translate`. `aiUserMessage(request)` and `aiSystemPrompt(request)` build the right message for each, so a route that uses them handles every Extra.
+
 Other options: `launcher: 'none'` hides the sparkle (control the bar with the `aiOpen` and `onAiOpenChange` props), `ribbonButton: true` adds a sparkle beside Comments in the ribbon, `studio: false` hides skills, letterhead and palette, and `onStudioChange` reports AI Studio's settings so you can keep them on your server.
+
+## AI that builds structure (Extra)
+
+With `ai.structure: true`, AI answers become document structure instead of plain text: headings, nested lists, bold and italic, links, quotes, code, rules and native Word **tables** (a header row shaded in the palette colour, column alignment). Nothing the model writes reaches the document as HTML: the answer is parsed (a JSON block list the model is asked for, with Markdown as the fallback), validated, capped and repaired, and the package writes the document itself.
+
+- **The Insert menu** in the AI bar and the **`/` slash menu** (type `/` at the start of an empty line) offer Table, Diagram, Chart, Timeline, Checklist, Callout, Equation, QR code, Image and Table of contents, plus Date, Divider, Page break and Signature line, and your own actions.
+- **Each opens one panel:** a prompt, a data source (the prompt, the selection, the document, a pasted CSV, or your app's `ai.pickData()`), a preview, and where to put it (at the cursor, replacing the selection, or below it). In Suggesting mode it goes in as a tracked change.
+- **Tables from data:** with data given, every number in the result must come from it; anything else becomes `[to confirm]`, marked in the preview. *Table from the data as is* skips the AI. Beside the preview: add or remove rows and columns, sort by a column, number formats (currency, percent, date) and a totals row.
+- **Diagrams** (flowchart, sequence, org chart, timeline, Gantt, mind map, entity relationship, state) are Mermaid, rendered in the browser with `securityLevel: 'strict'` and themed with the palette, and go in as a picture with alt text. The Mermaid source rides in the picture's title, so after a save and reopen, selecting the diagram shows **Edit diagram**: the code with a live preview, and an AI change ("add a step after approval"). A diagram that fails to render shows its code with *Ask AI to fix the diagram*. Pass `ai.mermaid = () => import('mermaid')`; Mermaid loads only when first used.
+- **Charts** (column, bar, line, area, pie, doughnut, scatter, stacked) go in as **native Word charts** with their data, title, legend and alt text, editable in Word.
+- **Equations** go in as Word equations from LaTeX. **QR codes** come from the package's own encoder (no library, no network). **Images** come from your `ai.generateImage(prompt)` or `ai.imageSearch(query)`, re-encoded as PNG, never inserted without a preview.
+- **Your own actions:** `ai.actions = [{ id, label, icon, run(ctx) → Block[] }]`, e.g. "Insert our standard donor paragraph".
+- Every result card says "AI-generated: check it before use" (in the card, not the document). Viewers and commenters see none of this.
+
+```tsx
+<WordcraftEditor
+  ai={{
+    complete,
+    structure: true,
+    mermaid: () => import('mermaid'),
+    pickData: async () => ({ label: 'Grants.xlsx', columns: ['Funder', 'Amount'], rows: [['Acme Trust', 25000]] }),
+    actions: [{ id: 'donor', label: 'Donor paragraph', run: () => [{ type: 'paragraph', text: 'Thank you…' }] }],
+  }}
+/>
+```
+
+The block schema is in `BLOCKS_PROMPT`; `parseBlocks`, `markdownToBlocks`, `sanitizeBlocks` and `insertBlocks(editor, blocks, { palette })` are exported for your own flows.
+
+## Brand theme and logo placement (Extra)
+
+**A theme from a logo or photo.** AI Studio › Palette › *From a logo or photo* takes pictures by upload, drag and drop, paste or your app's `ai.pickImage()`. The colours are found in the browser (shrunk to about 96 px, converted to Lab, transparent, near-white and near-black pixels skipped, k-means clusters merged and ranked by area and saturation; with several pictures, taken round-robin so a small logo is not drowned by a photo). Five to eight swatches show their share; roles (primary, secondary, accent, muted) are assigned automatically and changed by picking a role and then a swatch. A heading colour under 4.5:1 on the page gets a warning and a one-click fix; a dark variant is one tick away.
+
+*Apply to document* writes the palette as the **document theme** (the colour scheme in `word/theme/theme1.xml`, which Word's Design › Colors shows) and recolours the styles that use it: title, headings, hyperlinks and quotes, and the tables and callouts the AI inserts. Optional theme fonts (`ai.fonts = { heading, body }`, or the fields in the panel) go to the theme's font scheme. *Apply to headings only* is the light option. *Save palette* keeps it (with its source, "from logo.png") and calls `ai.onPaletteCreated(palette)`, so your app can store it for the whole organisation and pass it back in `ai.palettes`.
+
+**Logo placement.** The letterhead's logo can be a `LogoSpec`: `{ src, placement, size, offset, opacity, rotation, wrap, pages, repeat }`. Placements: header left, centre or right, logo beside the text (either side) or stacked above it, footer left, centre or right, a **watermark** behind the text (opacity 5 to 40 percent, straight or diagonal, optionally repeated), a cover page, a side edge strip, at the cursor, or a signature block. `pages` is `all`, `first` (Different First Page), `odd` or `even` (Different Odd & Even Pages). Partner logos (`partners: [dataUrl…]`) go in one evenly spaced row. A live mini page in AI Studio shows each preset. Pictures are trimmed of transparent margins, SVG becomes PNG, and opacity and rotation are baked into the picture so Word, Google Docs and LibreOffice show the same thing. Applying again replaces what was there; *Remove* clears the headers, footers and watermark it wrote. A plain `logo` string keeps working (above the text, aligned with it).
+
+```tsx
+<WordcraftEditor
+  ai={{
+    complete,
+    brand: { name: 'Sauti Salama', logo: logoDataUrl, palette: brandPalette },   // shorthand
+    letterhead: { name: 'Sauti Salama', logo: { src: logoDataUrl, placement: 'header-logo-left-text-right', pages: 'all' } },
+    onLogoChanged: (logo) => save(logo),
+    onPaletteCreated: (palette) => saveForOrganisation(palette),
+  }}
+/>
+```
+
+## Document chat (Extra)
+
+`ai.chat: true` adds **Ask** at the bottom right, opening a side panel like Gemini in Google Docs. Questions are answered from the document: whole document, this section, or the selection. Long documents are cut by heading and only the passages that match the question are sent (headings first for a broad question like a summary), never the whole text for a narrow one. Answers cite the passages as numbered chips; clicking one scrolls to the paragraph and highlights it.
+
+Quick actions: Summarise, Key points, Action items, Explain this, Translate selection, and *Find where it says…* (a plain search, no AI). Each answer has Insert at cursor, Replace selection, Copy and Add as comment. Viewers and commenters can ask but not insert. The panel remembers being open, per person. History is kept by `ai.chatStore` (`load`, `save`, `clear`; default: this browser), so your app can keep it per document and per person. It uses the same `ai.complete` as the bar, with `action: 'ask'`.
+
+## Writing checks (Extra)
+
+`checks` (or `ai.checker`) turns on writing checks in the manner of Grammarly: coloured underlines by category (correctness red, clarity blue, engagement green, delivery purple), a card at the caret with the explanation, one-click fixes, *Dismiss*, *Ignore this rule* and *Add to dictionary*, and a panel with every issue by category, a score, readability (Flesch reading ease and grade, sentence length, reading time) and a tone read-out ("confident, formal"). Goals (audience, formality, domain including plain language for public information, intent) change which rules and AI instructions apply.
+
+Paragraphs are checked after the person pauses (never per keystroke), one at a time, cached by their text; nothing is checked or sent in Viewing mode or in a `sensitive` document. A failing engine never affects typing or saving.
+
+Engines plug in through `Checker` (`{ name, remote?, check(text, ctx) → Issue[] }`):
+
+- `plainLanguageChecker()` (the default): long sentences, wordy phrases, jargon, passive voice, filler, repeated words. It runs in the browser; nothing is sent.
+- `languageTool({ url })`: LanguageTool (open source, LGPL core) on your own server, `POST /v2/check`, 25+ languages.
+- `llmChecker(complete)`: clarity, tone and rewrites through your AI (`action: 'check'`).
+
+Grammarly's Text Editor SDK closed in January 2024, so there is no Grammarly adapter; any other service fits the `Checker` contract.
+
+```tsx
+<WordcraftEditor checks={{ checkers: [plainLanguageChecker(), languageTool({ url: 'https://lt.example.org' })], goals: { domain: 'plain' } }} />
+```
+
+## Originality (Extra)
+
+`originality` adds an Originality panel. Nothing runs until the person asks; it says what is sent and to whom; results are overlays only (never written into the file); and it never blocks saving, sharing or exporting. A `sensitive` document hides it and sends nothing.
+
+- `corpus.search(text)`: near matches in **your organisation's own documents** (reused grant text, boilerplate), the private default.
+- `checkPlagiarism(text)`: a service you choose, returning `{ score, matches: [{ start, end, similarity, sourceTitle, url }] }`.
+- `detectAi(text)`: an AI-writing detector, shown only as a soft per-paragraph signal ("may contain AI-generated text, low confidence") with a note that detectors are often wrong, especially for people writing in a second language. Never a verdict.
+
+The report shows the overall similarity and the matched passages, highlighted in the text, each with *Go to*, *Add citation* (a real Word citation) and *Rewrite*. No vendor is built in.
+
+## Tools (Extra)
+
+`tools` turns on side panels, each separately: `outline` (headings, click to go, drag or Alt+Up/Down to move a section), `accessibility` (WordCraft's own checker: alt text, heading order, contrast, link text, table headers, with fixes), `sources` (sources, citations and a bibliography in APA, MLA, Chicago and more), `wordCount` (`{ goal }` for a word goal; words, characters, pages, reading time, per section and for the selection), `voice` (voice typing through the browser's speech recognition) and `translate` (a translated copy of the document, keeping headings, lists and tables, handed to `onTranslated` or downloaded as Markdown). They open from **Tools** at the bottom right, or from the phone layout's More menu.
 
 ## Version history (Extra)
 

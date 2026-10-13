@@ -185,6 +185,10 @@ impl Collab {
             let mut txn = self.ydoc.transact_mut_with(ORIGIN_REMOTE);
             txn.apply_update(update).map_err(|e| CollabError::BadUpdate(e.to_string()))?;
         }
+        // Someone else's change closes this person's undo step: edits made on either side of it
+        // are separate steps, even within the grouping window, so one Undo never takes back more
+        // than the person last did.
+        self.undo.reset();
         self.rebuild(&anchors, sel)
     }
 

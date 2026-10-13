@@ -240,6 +240,18 @@ export interface DocComment {
   anchor: { path: number[]; start: number; end: number } | null;
 }
 
+/** A place in the body text: the paragraph's path and a UTF-16 offset in its text. */
+export interface TextPoint {
+  path: number[];
+  offset: number;
+}
+
+/** The selection's two ends (`anchor` where it started, `focus` where the caret is). */
+export interface CaretInfo {
+  anchor: TextPoint | null;
+  focus: TextPoint | null;
+}
+
 /** A mark over the text: a squiggle (writing checks) or a highlight (originality). */
 export interface TextMark {
   id: string;
@@ -402,6 +414,10 @@ export interface WordcraftEditor {
   selectText(path: number[], start: number, end: number): void;
   /** Lay marks over the text (squiggles or highlights); an empty list clears them. */
   setMarks(marks: TextMark[]): void;
+  /** Where the selection is, as `paragraphs()` counts it; `null` ends are outside the body (a header, a footnote). */
+  caret(): CaretInfo | null;
+  /** The selected picture, chart or shape (`kind`, its alt text and title), or `null`. Read only. */
+  selectedObject(): { kind: 'picture' | 'chart' | 'shape'; alt: string; title: string } | null;
   /** Keep a collaborator's caret in view until the person scrolls, clicks or types (`null` stops). */
   followPeer(name: string | null): void;
   /** Run any WordCraft command by id, e.g. `execute('format.bold')`, `execute('text.insert', { text: 'Hi' })`. */
@@ -476,6 +492,8 @@ interface RawHandle {
   comments?(): string;
   selectText?(path: string, start: number, end: number): void;
   setMarks?(json: string): void;
+  caret?(): string;
+  selectedObject?(): string;
   followPeer?(name: string | null): void;
   collabStart(clientId: number, state: Uint8Array | null): boolean;
   collabApply(update: Uint8Array): void;
@@ -558,7 +576,7 @@ const DEFAULT_PREFS: Partial<WordcraftPrefs> = { showDiscord: false };
 import { googleFonts, readRecentFonts, writeRecentFonts } from './fonts.js';
 import type { FontSource } from './fonts.js';
 export { googleFonts } from './fonts.js';
-export { describeAiRequest } from './ai-core.js';
+export { BLOCKS_PROMPT, CHAT_SYSTEM_PROMPT, CHECK_SYSTEM_PROMPT, STRUCTURE_SYSTEM_PROMPT, describeAiRequest } from './ai-core.js';
 export type { AiAction, AiRequest } from './ai-core.js';
 export { AI_PROVIDERS, AI_SYSTEM_PROMPT, aiSystemPrompt, aiUserMessage, completeWith } from './ai-providers.js';
 export { browserVersionStore, httpVersionStore, memoryVersionStore, newVersionId, pruneVersions } from './versions.js';
@@ -820,6 +838,14 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     setMarks(marks) {
       alive();
       raw.setMarks?.(JSON.stringify(marks));
+    },
+    caret() {
+      alive();
+      return raw.caret ? (JSON.parse(raw.caret()) as CaretInfo) : null;
+    },
+    selectedObject() {
+      alive();
+      return raw.selectedObject ? (JSON.parse(raw.selectedObject()) as ReturnType<WordcraftEditor['selectedObject']>) : null;
     },
     followPeer(name) {
       alive();

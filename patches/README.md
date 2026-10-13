@@ -13,6 +13,7 @@ upstream as-is. When upstream accepts one, delete it here.
 | 0004 | An AI (sparkle) button beside Comments for hosts that offer AI, and Word's ribbon collapse: the ^ button, and a collapsed ribbon that opens over the page when a tab is clicked, with a pin |
 | 0005 | Windows-style inline tools (Bullets, Numbering and New Comment on the mini toolbar, and the toolbar above the context menu), rulers that follow the page in view and open Page Setup on a double-click, font-box previews for web fonts, and Version History's entry points (the title, which reads "Name • Saved", and File › Info) |
 | 0006 | Hiding the status bar, so a host can draw its own phone interface (the package's mobile layout) around the page |
+| 0007 | Custom theme colours for Design › Colors (`design.themeColors` with `colors`, written to `word/theme/theme1.xml`), and editing the first page's or even pages' header and footer (`insert.editHeader` and `insert.editFooter` with `kind`), for the brand theme and logo placement |
 
 The patches were made against the upstream commit in `BASE`. Every sync rebases them onto the new
 upstream with a three-way merge and refreshes them, so they only need a person when both sides

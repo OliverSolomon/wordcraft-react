@@ -10,6 +10,7 @@
  *
  * Server-safe: no React, no DOM at import time.
  */
+import type { LogoSpec } from './letterhead.js';
 import type { WordcraftEditor } from './core.js';
 
 /** A writing skill: instructions the AI follows on every request while it is on. */
@@ -31,8 +32,14 @@ export interface Letterhead {
   address?: string;
   /** Email, phone, website: one line. */
   contact?: string;
-  /** Logo as a data URL (`data:image/png;base64,…`). */
-  logo?: string;
+  /**
+   * The logo: a data URL (`data:image/png;base64,…`), placed above the text and aligned with it,
+   * or a `LogoSpec` with its placement (header, footer, watermark, cover page…), size, opacity,
+   * wrap and pages (an Extra).
+   */
+  logo?: string | LogoSpec;
+  /** Partner logos (data URLs), in one evenly spaced row under the letterhead. */
+  partners?: string[];
   /** Logo width in points. Default 48. */
   logoWidth?: number;
   align?: 'left' | 'center' | 'right';
@@ -44,6 +51,8 @@ export interface Letterhead {
 
 /** Brand colours as `RRGGBB` hex. */
 export interface Palette {
+  /** Where it came from, e.g. "from logo.png" (palettes made from a picture). */
+  source?: string;
   id: string;
   name: string;
   /** Titles, Heading 1 and the letterhead name. */
@@ -71,6 +80,8 @@ export interface AiStudioState {
   palette: string;
   /** The person's own palette (id `custom`). */
   customPalette?: Palette;
+  /** Palettes the person made from a logo or photo. */
+  savedPalettes?: Palette[];
 }
 
 export const HUMANISER: AiSkill = {
@@ -153,7 +164,7 @@ export function effectiveLetterhead(state: Pick<AiStudioState, 'letterheadOverri
 
 /** Two letterheads with the same fields (a host may pass a new object with the same values). */
 export function sameLetterhead(a: Letterhead | null | undefined, b: Letterhead | null | undefined): boolean {
-  const key = (l: Letterhead | null | undefined) => (l ? JSON.stringify([l.name, l.tagline, l.address, l.contact, l.logo, l.logoWidth, l.align, l.font, l.rule]) : '');
+  const key = (l: Letterhead | null | undefined) => (l ? JSON.stringify([l.name, l.tagline, l.address, l.contact, l.logo, l.logoWidth, l.align, l.font, l.rule, l.partners]) : '');
   return key(a) === key(b);
 }
 
@@ -173,6 +184,7 @@ export function readStudio(defaults: Partial<AiStudioState> = {}): AiStudioState
       letterheadOverride: override ?? base.letterheadOverride,
       palette: typeof v.palette === 'string' ? v.palette : base.palette,
       customPalette: v.customPalette,
+      savedPalettes: Array.isArray(v.savedPalettes) ? v.savedPalettes.filter((x) => x && typeof x.id === 'string' && typeof x.primary === 'string').slice(0, 24) : [],
     };
   } catch {
     return base;
@@ -244,7 +256,7 @@ export function studioInstructions(skills: AiSkill[], letterhead: Letterhead | n
 /** The chosen palette (built-in, the app's, or the person's own). */
 export function paletteFor(state: AiStudioState, extra: Palette[] = []): Palette {
   if (state.palette === 'custom' && state.customPalette) return state.customPalette;
-  return [...extra, ...BUILT_IN_PALETTES].find((p) => p.id === state.palette) ?? BUILT_IN_PALETTES[0];
+  return [...extra, ...(state.savedPalettes ?? []), ...BUILT_IN_PALETTES].find((p) => p.id === state.palette) ?? BUILT_IN_PALETTES[0];
 }
 
 const rgb = (hex: string) => {
@@ -291,9 +303,11 @@ export function applyLetterhead(editor: WordcraftEditor, lh: Letterhead, p: Pale
       editor.execute('para.spacing', { before: 0, after });
       editor.execute('para.borders', { kind: 'none' });
     };
-    if (lh.logo?.startsWith('data:image/')) {
+    const logo = typeof lh.logo === 'string' ? lh.logo : lh.logo?.src;
+    if (logo?.startsWith('data:image/') && !logo.startsWith('data:image/svg')) {
       paragraph(6);
-      editor.execute('insert.picture', { data: lh.logo.slice(lh.logo.indexOf(',') + 1), width: lh.logoWidth ?? 48, alt: `${lh.name} logo` });
+      editor.execute('insert.picture', { data: logo.slice(logo.indexOf(',') + 1), width: lh.logoWidth ?? 48, alt: `${lh.name} logo` });
+      editor.execute('caret.right');
     }
     lines.forEach((line, i) => {
       paragraph(line.after);

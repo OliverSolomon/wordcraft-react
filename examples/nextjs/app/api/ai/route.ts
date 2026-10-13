@@ -1,33 +1,18 @@
 // The AI bar's endpoint: streams Claude's answer as plain text. Set ANTHROPIC_API_KEY (and
 // optionally ANTHROPIC_MODEL). With WORDCRAFT_FAKE_AI=1 it streams a canned answer, for tests.
 // Any model works: the editor only needs text back.
-import { aiSystemPrompt, describeAiRequest, type AiAction } from '@gamine/wordcraft-react/core';
+import { aiSystemPrompt, aiUserMessage, describeAiRequest, type AiRequest } from '@gamine/wordcraft-react/core';
 
 export const runtime = 'nodejs';
 
-const MAX_CONTEXT = 24_000; // characters of the document sent as context
-
-interface Body {
-  prompt: string;
-  action: AiAction;
-  selection: string;
-  document: string;
-  /** AI Studio's skills (the Humaniser by default) and letterhead context. */
-  instructions?: string;
-}
-
+type Body = Omit<AiRequest, 'signal'>;
 
 export async function POST(req: Request) {
   const body = (await req.json()) as Body;
   const task = describeAiRequest(body);
-  const context = body.document.length > MAX_CONTEXT ? body.document.slice(-MAX_CONTEXT) : body.document;
-  const user = [
-    `Document so far:\n<document>\n${context}\n</document>`,
-    body.selection ? `Selected text:\n<selection>\n${body.selection}\n</selection>` : '',
-    `Task: ${task}`,
-  ]
-    .filter(Boolean)
-    .join('\n\n');
+  // The package builds the message for every kind of request: writing, document chat (numbered
+  // passages and history), writing checks, structured blocks (with data) and translation.
+  const user = aiUserMessage(body);
 
   if (process.env.WORDCRAFT_FAKE_AI === '1') {
     const skills = body.instructions?.includes('Humaniser') ? ' with the Humaniser' : '';
@@ -52,7 +37,7 @@ export async function POST(req: Request) {
     headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
     body: JSON.stringify({
       model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-5-5',
-      max_tokens: 1500,
+      max_tokens: 4000,
       stream: true,
       system: aiSystemPrompt(body),
       messages: [{ role: 'user', content: user }],
