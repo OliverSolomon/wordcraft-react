@@ -183,6 +183,8 @@ export interface AiBarProps {
   /** Distance from the bottom of the editor, clearing WordCraft's status bar. */
   bottom?: number;
   dark?: boolean;
+  /** The person may not change the text (viewers, commenters): answers can be read and copied, not inserted. */
+  readOnly?: boolean;
 }
 
 /** Is any source of answers set up: the app's, or the person's own key? */
@@ -193,7 +195,7 @@ export function aiReady(options: AiOptions): boolean {
 type StudioTab = 'skills' | 'letterhead' | 'palette' | 'model';
 
 /** The AI bar and its launcher. `<WordcraftEditor ai={...} />` renders it for you. */
-export function AiBar({ editor, options, open, onOpenChange, launcher = true, bottom = 30, dark }: AiBarProps) {
+export function AiBar({ editor, options, open, onOpenChange, launcher = true, bottom = 30, dark, readOnly = false }: AiBarProps) {
   const allowUserKey = options.allowUserKey ?? true;
   const showStudio = options.studio ?? true;
   const [own, setOwn] = useState<AiProviderConfig | null>(null);
@@ -322,7 +324,7 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
   };
 
   const accept = (mode: 'replace' | 'below') => {
-    if (!editor || editor.destroyed || !result) return;
+    if (!editor || editor.destroyed || !result || readOnly) return;
     if (mode === 'below' && selection) {
       // Keep the selection and add the text after it, in a new paragraph.
       editor.execute('caret.right');
@@ -463,10 +465,16 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
         )}
         {result && !busy && (
           <div className="wcai-actions">
-            <button type="button" className="wcai-btn wcai-primary" onClick={() => accept('replace')}>
-              {selection ? 'Replace' : 'Insert'}
-            </button>
-            {selection && (
+            {readOnly ? (
+              <button type="button" className="wcai-btn wcai-primary" onClick={() => void navigator.clipboard?.writeText(result.trim())}>
+                Copy
+              </button>
+            ) : (
+              <button type="button" className="wcai-btn wcai-primary" onClick={() => accept('replace')}>
+                {selection ? 'Replace' : 'Insert'}
+              </button>
+            )}
+            {selection && !readOnly && (
               <button type="button" className="wcai-btn" onClick={() => accept('below')}>
                 Insert below
               </button>

@@ -9,10 +9,10 @@ A host that draws its own phone interface can hide the status bar with the hideS
  1 file changed, 6 insertions(+), 1 deletion(-)
 
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index 28caf30..d6d78e4 100644
+index 84d78a5..8b0e003 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
-@@ -138,6 +138,8 @@ pub struct UiState {
+@@ -200,6 +200,8 @@ pub struct UiState {
      pub hide_title_bar: bool,
      /// Embedded: hide the ribbon including its tab row (Word's "Auto-hide Ribbon").
      pub hide_ribbon: bool,
@@ -21,7 +21,7 @@ index 28caf30..d6d78e4 100644
      /// Embedded: ribbon tabs the host doesn't offer (`File`, `Home`, `Insert`, `Draw`, ...).
      pub hidden_tabs: Vec<String>,
      /// Fonts picked lately, newest first (Word's "Recently Used Fonts").
-@@ -212,6 +214,7 @@ impl Default for UiState {
+@@ -290,6 +292,7 @@ impl Default for UiState {
              language: i18n::AUTO.into(),
              hide_title_bar: false,
              hide_ribbon: false,
@@ -29,7 +29,7 @@ index 28caf30..d6d78e4 100644
              hidden_tabs: Vec::new(),
              recent_fonts: Vec::new(),
              editing: wordcraft_engine::Prefs::default(),
-@@ -1289,7 +1292,9 @@ impl WordApp {
+@@ -1679,7 +1682,9 @@ impl WordApp {
              if !self.ui.hide_ribbon {
                  ribbon::show(self, ui);
              }

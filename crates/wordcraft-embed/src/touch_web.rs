@@ -31,6 +31,10 @@ pub struct TouchState {
     selected: bool,
     last_time: Option<f64>,
     last_report: String,
+    /// A scroll the host asked for (following someone), applied with the next frame's input.
+    pending_scroll: Vec2,
+    /// The person used the mouse, keyboard, wheel or a finger this frame (following stops).
+    pub user_input: bool,
 }
 
 impl Default for TouchState {
@@ -45,6 +49,8 @@ impl Default for TouchState {
             selected: false,
             last_time: None,
             last_report: String::new(),
+            pending_scroll: Vec2::ZERO,
+            user_input: false,
         }
     }
 }
@@ -64,6 +70,21 @@ fn select(app: &mut WordApp, anchor: &Pos, focus: &Pos) {
 impl TouchState {
     /// Before each frame: turn this frame's touch events into page gestures.
     pub fn input(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput, app: &mut WordApp) {
+        self.user_input = raw.events.iter().any(|e| {
+            matches!(
+                e,
+                Event::PointerButton { pressed: true, .. }
+                    | Event::MouseWheel { .. }
+                    | Event::Key { pressed: true, .. }
+                    | Event::Touch { phase: egui::TouchPhase::Start, .. }
+            )
+        });
+        if self.pending_scroll != Vec2::ZERO
+            && let Some(area) = app.canvas.canvas_rect
+        {
+            raw.events.push(Event::PointerMoved(area.center()));
+            raw.events.extend(wheel_events(std::mem::take(&mut self.pending_scroll)));
+        }
         if !self.on {
             return;
         }
@@ -176,9 +197,15 @@ impl TouchState {
         }
     }
 
+    /// Scroll the page by `delta` points (positive = content moves down) on the next frame.
+    pub fn scroll_by(&mut self, delta: Vec2) {
+        self.pending_scroll += delta;
+    }
+
     /// The selection as the host sees it, in egui points from the editor's top-left corner.
-    /// `screen` (the whole editor, in points) lets the host convert to CSS pixels.
-    pub fn info(&self, app: &mut WordApp, screen: Option<Rect>) -> Value {
+    /// `screen` (the whole editor, in points) lets the host convert to CSS pixels. `extra` adds
+    /// the host's own fields (marks under the caret, who is being followed).
+    pub fn info(&self, app: &mut WordApp, screen: Option<Rect>, extra: &Value) -> Value {
         let (start, end) = ordered(app);
         let collapsed = start == end;
         let canvas = app.canvas.canvas_rect;
@@ -219,12 +246,14 @@ impl TouchState {
             "scrolling": self.rec.scrolling(),
             "scrolled": self.rec.scrolled,
             "screen": screen.map(r2j),
+            "marks": extra.get("marks").cloned().unwrap_or(json!([])),
+            "following": extra.get("following").cloned().unwrap_or(Value::Null),
         })
     }
 
     /// The selection info when it changed since the last report.
-    pub fn report(&mut self, app: &mut WordApp, screen: Option<Rect>) -> Option<String> {
-        let now = self.info(app, screen).to_string();
+    pub fn report(&mut self, app: &mut WordApp, screen: Option<Rect>, extra: &Value) -> Option<String> {
+        let now = self.info(app, screen, extra).to_string();
         if now == self.last_report {
             return None;
         }

@@ -14,6 +14,7 @@ use wordcraft_engine::Session;
 use wordcraft_ui_egui::{Inbox, Services, UiState, WordApp};
 
 use crate::collab::{CollabState, Peer, parse_color};
+use crate::doc_tools::{Mark, comments_json, marks_at, paragraphs_json, parse_marks, pos_at};
 use crate::touch_web::TouchState;
 use crate::{MountOptions, autosave_name, document_fonts, merge_json, mime_for};
 
@@ -51,6 +52,10 @@ struct Shared {
     touch: RefCell<TouchState>,
     /// `cb(info)` when the selection, its place on screen or the contextual tabs change.
     on_selection: RefCell<Option<js_sys::Function>>,
+    /// The host's marks over the text (writing checks, originality), drawn every frame.
+    marks: RefCell<Vec<Mark>>,
+    /// The collaborator being followed: their caret is kept in view until the person moves.
+    follow: RefCell<Option<String>>,
 }
 
 impl Shared {
@@ -100,6 +105,8 @@ pub async fn mount(
         on_host_event: RefCell::new(None),
         touch: RefCell::new(TouchState::default()),
         on_selection: RefCell::new(None),
+        marks: RefCell::new(Vec::new()),
+        follow: RefCell::new(None),
     });
 
     let mut web_options = eframe::WebOptions::default();
@@ -231,11 +238,27 @@ impl Shell {
     /// Selection handles, and the selection reported to the host when it changed.
     fn touch_frame(&self, app: &mut WordApp, ctx: &egui::Context) {
         let Ok(mut touch) = self.shared.touch.try_borrow_mut() else { return };
+        paint_marks(app, ctx, &self.shared.marks.borrow());
         touch.paint(app, ctx);
+        // Following someone: keep their caret in view, until this person scrolls, clicks or types.
+        if touch.user_input {
+            self.shared.follow.borrow_mut().take();
+        }
+        let following = self.shared.follow.borrow().clone();
+        if let Some(name) = &following
+            && let Some(delta) = self.follow_delta(app, name)
+        {
+            touch.scroll_by(delta);
+            ctx.request_repaint();
+        }
         if self.shared.on_selection.borrow().is_none() {
             return;
         }
-        let Some(info) = touch.report(app, Some(ctx.content_rect())) else { return };
+        let marks = self.shared.marks.borrow();
+        let under: Vec<&str> = marks_at(&marks, &app.session.sel.focus);
+        let extra = json!({"marks": under, "following": following});
+        drop(marks);
+        let Some(info) = touch.report(app, Some(ctx.content_rect()), &extra) else { return };
         drop(touch);
         let shared = self.shared.clone();
         defer(move || {
@@ -246,6 +269,21 @@ impl Shell {
                 log::error!("wordcraft selection handler threw: {e:?}");
             }
         });
+    }
+
+    /// How far to scroll so the followed person's caret sits in the middle third of the page.
+    fn follow_delta(&self, app: &mut WordApp, name: &str) -> Option<egui::Vec2> {
+        let head = self.shared.collab.try_borrow().ok()?.as_ref()?.peer_head(name)?;
+        let layout = app.session.layout();
+        let c = layout.caret_on(&head, app.session.page_hint)?;
+        let at = wordcraft_ui_egui::canvas::page_to_screen(app, c.page, c.x, c.top)?;
+        let area = app.canvas.canvas_rect?;
+        let band = (area.top() + area.height() / 3.0)..(area.bottom() - area.height() / 3.0);
+        if band.contains(&at.y) {
+            return None;
+        }
+        // Positive scroll moves the content down: bring `at` to the centre.
+        Some(egui::vec2(0.0, area.center().y - at.y))
     }
 
     /// Events from WordCraft's UI meant for the page, such as the AI button being clicked.
@@ -375,6 +413,49 @@ impl eframe::App for Shell {
         self.font_requests(app);
         self.host_events(app);
         self.note_changes(app);
+    }
+}
+
+/// The host's marks: squiggles under the text (writing checks) or highlights (originality).
+fn paint_marks(app: &mut WordApp, ctx: &egui::Context, marks: &[Mark]) {
+    if marks.is_empty() {
+        return;
+    }
+    let Some(clip) = app.canvas.canvas_rect else { return };
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("wordcraft-host-marks"))).with_clip_rect(clip);
+    let layout = app.session.layout();
+    let hint = app.session.page_hint;
+    for m in marks {
+        let color = egui::Color32::from_rgb(m.color[0], m.color[1], m.color[2]);
+        for (page, r) in layout.selection_rects(&app.session.doc, &m.start, &m.end, hint) {
+            let (Some(a), Some(b)) = (
+                wordcraft_ui_egui::canvas::page_to_screen(app, page, r.x, r.y),
+                wordcraft_ui_egui::canvas::page_to_screen(app, page, r.x + r.w, r.y + r.h),
+            ) else {
+                continue;
+            };
+            let rect = egui::Rect::from_two_pos(a, b);
+            if !rect.intersects(clip) {
+                continue;
+            }
+            if m.squiggle {
+                // A wavy line along the bottom of the text, as spelling marks are drawn.
+                let y = rect.bottom() - 1.0;
+                let mut pts = Vec::new();
+                let mut x = rect.left();
+                let mut up = true;
+                while x <= rect.right() {
+                    pts.push(egui::pos2(x, if up { y - 1.5 } else { y + 0.5 }));
+                    x += 2.5;
+                    up = !up;
+                }
+                if pts.len() > 1 {
+                    painter.add(egui::Shape::line(pts, egui::Stroke::new(1.3, color)));
+                }
+            } else {
+                painter.rect_filled(rect, 0.0, color.gamma_multiply(0.28));
+            }
+        }
     }
 }
 
@@ -989,6 +1070,51 @@ impl WordcraftHandle {
         self.shared.repaint();
     }
 
+    /// Every body paragraph, tables included, as JSON: `[{path, text, style, styleName,
+    /// heading}]`. Offsets elsewhere (`selectText`, `setMarks`, comment anchors) count UTF-16
+    /// code units in this `text`.
+    pub fn paragraphs(&self) -> Result<String, JsValue> {
+        self.with_app(|app| Ok(paragraphs_json(&app.session.doc).to_string()))
+    }
+
+    /// Every comment as JSON: `[{id, parent, author, initials, date, resolved, text, quote,
+    /// anchor: {path, start, end} | null}]`.
+    pub fn comments(&self) -> Result<String, JsValue> {
+        self.with_app(|app| Ok(comments_json(&app.session.doc).to_string()))
+    }
+
+    /// Select `start..end` (UTF-16 offsets) of the paragraph at `path` (JSON array) and scroll to it.
+    #[wasm_bindgen(js_name = selectText)]
+    pub fn select_text(&self, path: &str, start: u32, end: u32) -> Result<(), JsValue> {
+        let path: Vec<u32> = serde_json::from_str(path).map_err(|e| err(format!("path: {e}")))?;
+        self.with_app(|app| {
+            let a = pos_at(&app.session.doc, &path, start as usize).ok_or("no paragraph at that path")?;
+            let b = pos_at(&app.session.doc, &path, end as usize).ok_or("no paragraph at that path")?;
+            app.run("select.range", json!({"anchor": a, "focus": b}))?;
+            app.canvas.scroll_to_caret = true;
+            Ok(())
+        })
+    }
+
+    /// Marks over the text: `[{id, path, start, end, color: "#rrggbb", style: "squiggle" |
+    /// "highlight"}]` (UTF-16 offsets in the paragraph's text). An empty list clears them.
+    #[wasm_bindgen(js_name = setMarks)]
+    pub fn set_marks(&self, json: &str) -> Result<(), JsValue> {
+        let v: Value = serde_json::from_str(json).map_err(|e| err(format!("marks: {e}")))?;
+        let marks = self.with_app(|app| Ok(parse_marks(&app.session.doc, &v)))?;
+        *self.shared.marks.borrow_mut() = marks;
+        self.shared.repaint();
+        Ok(())
+    }
+
+    /// Follow a collaborator by name (their caret stays in view until this person scrolls,
+    /// clicks or types), or stop with `null`.
+    #[wasm_bindgen(js_name = followPeer)]
+    pub fn follow_peer(&self, name: Option<String>) {
+        *self.shared.follow.borrow_mut() = name;
+        self.shared.repaint();
+    }
+
     /// The selection as JSON: `collapsed`, `rect` (the visible part, in CSS pixels from the
     /// editor's corner), `contextual` tabs, `touch` (made by touch), `selected` (a touch
     /// selection just finished), `scrolling` and `scrolled`.
@@ -996,7 +1122,11 @@ impl WordcraftHandle {
     pub fn selection_info(&self) -> Result<String, JsValue> {
         let shared = self.shared.clone();
         let screen = self.shared.ctx.borrow().as_ref().map(egui::Context::content_rect);
-        self.with_app(|app| shared.touch.try_borrow().map(|t| t.info(app, screen).to_string()).map_err(|_| "busy".to_string()))
+        self.with_app(|app| {
+            let marks = shared.marks.borrow();
+            let extra = json!({"marks": marks_at(&marks, &app.session.sel.focus), "following": *shared.follow.borrow()});
+            shared.touch.try_borrow().map(|t| t.info(app, screen, &extra).to_string()).map_err(|_| "busy".to_string())
+        })
     }
 
     /// Whether a font family is available to documents now.
