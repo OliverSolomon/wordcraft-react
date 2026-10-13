@@ -36,6 +36,10 @@ export const SHOTS = {
   mobilePalette: shot('mobile-palette', 'The command palette open on Home, with the font boxes'),
   mobileSelect: shot('mobile-select', 'A long-pressed word with handles and the floating toolbar'),
   mobileTable: shot('mobile-table', 'Insert Table as a page inside the palette'),
+  comments: shot('comments', 'The comments panel: a thread with a mention, an assignment and a reply'),
+  viewer2: shot('access-viewer', 'A viewer: the access chip at the bottom right, and typing refused'),
+  commenter: shot('access-commenter', 'A commenter adding a comment through the panel'),
+  letterheadOrg: shot('ai-letterhead-org', "AI Studio showing the organisation's letterhead, ready to apply"),
 };
 
 export const SHOWCASES: Record<string, Showcase> = {
@@ -143,5 +147,31 @@ export default function Edit() {
     />
   );
 }`,
+  },
+  comments: {
+    shots: [SHOTS.comments, SHOTS.commenter, SHOTS.editor],
+    live: 'editor',
+    caption: 'Threads with filters, @mentions and Assign to, on top of WordCraft’s own Word-style comments; your store hears every change.',
+    code: `<WordcraftEditor
+  comments={{
+    people: team,
+    store: {
+      create: (c) => api.post('/comments', c),
+      reply: (c, parent) => api.post(\`/comments/\${parent.id}/replies\`, c),
+      resolve: (c, resolved) => api.patch(\`/comments/\${c.id}\`, { resolved }),
+    },
+    onMention: ({ comment, people }) => notify(people, comment),
+  }}
+/>`,
+  },
+  access: {
+    shots: [SHOTS.viewer2, SHOTS.commenter, SHOTS.comments],
+    live: 'editor',
+    caption: 'View, comment, suggest or edit, enforced by the editor itself and changeable while the document is open.',
+    code: `<WordcraftEditor
+  permission={share.level}        // 'view' | 'comment' | 'suggest' | 'edit'
+  allowCopy={share.level !== 'view'}
+  comments
+/>`,
   },
 };

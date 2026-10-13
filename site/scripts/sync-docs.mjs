@@ -17,6 +17,8 @@ const PAGES = [
   { slug: 'editor-api', title: 'Editor API', group: 'Start', sections: ['Editor API (the ref)'] },
   { slug: 'without-react', title: 'Without React', group: 'Start', sections: ['Without React'] },
   { slug: 'co-editing', title: 'Co-editing', group: 'Features', extra: true, sections: ['Co-editing'] },
+  { slug: 'access', title: 'Access levels', group: 'Features', sections: ['Access levels'] },
+  { slug: 'comments', title: 'Comments', group: 'Features', extra: true, sections: ['Comments'] },
   { slug: 'ai', title: 'AI and AI Studio', group: 'Features', extra: true, sections: ['AI (Extra)'] },
   { slug: 'version-history', title: 'Version history', group: 'Features', extra: true, sections: ['Version history (Extra)'] },
   { slug: 'fonts', title: 'Fonts', group: 'Features', sections: ['Fonts'] },
@@ -38,6 +40,8 @@ const SUMMARIES = {
   'editor-api': 'Load, export and script the editor through its ref, with the same commands as the ribbon.',
   'without-react': 'Mount the editor in any element with the framework-free core.',
   'co-editing': 'Several people in one document at once, with live cursors and per-person undo.',
+  access: 'View, comment, suggest or edit, enforced by the editor and changeable live.',
+  comments: 'Threads, mentions, Assign to and a comment store, in the Google Docs style.',
   ai: 'A Gemini-style writing bar with skills, letterheads, palettes and your own model.',
   'version-history': 'Versions recorded as you work, to view, name, restore or download.',
   fonts: 'The Google Fonts library in the font box, previewed in each face.',
@@ -55,6 +59,8 @@ const SUMMARIES = {
 // In-README anchors that now live on other pages.
 const ANCHORS = {
   '#phones-and-tablets': '/docs/mobile/',
+  '#access-levels': '/docs/access/',
+  '#comments': '/docs/comments/',
   '#co-editing': '/docs/co-editing/',
   '#real-time-co-editing': '/docs/co-editing/',
   '#ai-extra': '/docs/ai/',

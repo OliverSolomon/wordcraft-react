@@ -1,8 +1,8 @@
 # How close is the editor to Microsoft Word?
 
-The editor is WordCraft, so its Word coverage is WordCraft's. Upstream measures that coverage against a catalogue of Word's ribbon and menu features, taken from Word for Mac 16.113.4 (Microsoft 365). The numbers below are from that catalogue at the pinned upstream commit (WordCraft 0.5.0, `UPSTREAM_REV`), and they rise with every sync. Upstream regenerates the live list in its [`docs/parity-checklist.md`](https://github.com/storytold/wordcraft/blob/main/docs/parity-checklist.md), and ranks the shortfalls in [`docs/gaps.md`](https://github.com/storytold/wordcraft/blob/main/docs/gaps.md).
+The editor is WordCraft, so its Word coverage is WordCraft's. Upstream measures that coverage against a catalogue of Word's ribbon and menu features, taken from Word for Mac 16.113.4 (Microsoft 365). The numbers below are from that catalogue at the pinned upstream commit (WordCraft 0.6.1, `UPSTREAM_REV`), and they rise with every sync. Upstream regenerates the live list in its [`docs/parity-checklist.md`](https://github.com/storytold/wordcraft/blob/main/docs/parity-checklist.md), and ranks the shortfalls in [`docs/gaps.md`](https://github.com/storytold/wordcraft/blob/main/docs/gaps.md).
 
-**Overall: 482 of 497 catalogued Word features are implemented (97.0%).** The catalogue grew from 434 to 497 features as upstream added tabs it now covers (Developer, Outlining, SmartArt Design, Chart Design, Header & Footer).
+**Overall: 487 of 502 catalogued Word features are implemented (97.0%).** The catalogue grew from 434 to 502 features as upstream added tabs it now covers (Developer, Outlining, SmartArt Design, Chart Design, Header & Footer, Title Bar and Tools).
 
 ## Formatting (Home)
 
@@ -26,7 +26,7 @@ The editor is WordCraft, so its Word coverage is WordCraft's. Upstream measures 
 
 ## Tables (Insert, Table Design, Table Layout)
 
-**Table Design 8 of 8, Table Layout 32 of 32.**
+**Table Design 8 of 8, Table Layout 33 of 33.**
 
 - **Inserting:** Insert Table, Draw Table, Convert Text to Table, Quick Tables, and an Excel spreadsheet object.
 - **Table Design:** table styles with Table Style Options; new, modify and delete table styles; shading, borders and Border Painter.
@@ -55,10 +55,11 @@ The editor is WordCraft, so its Word coverage is WordCraft's. Upstream measures 
 
 | Tab | Implemented |
 |---|---|
-| File | 21 of 21 |
-| Quick Access | 4 of 4 |
+| File | 22 of 22 |
+| Quick Access | 5 of 5 (with the Undo history list) |
+| Title Bar | 1 of 1 |
 | Layout | 22 of 22 |
-| References | 24 of 24 |
+| References | 25 of 25 |
 | Mailings | 17 of 17 |
 | Review | 29 of 31 (missing Translate, Block Authors) |
 | View | 25 of 29 (missing the multi-window commands: Arrange All, Side by Side, Synchronous Scrolling, Switch Windows) |
@@ -72,6 +73,7 @@ The editor is WordCraft, so its Word coverage is WordCraft's. Upstream measures 
 | Chart Design | 5 of 5 |
 | Header & Footer | 5 of 5 |
 | Editing | 38 of 38 |
+| Tools | 6 of 6 |
 
 ## Extras: what this package adds beyond Word and WordCraft
 
@@ -87,6 +89,9 @@ These are tagged **✦ Extra** in the docs and *Extra* in the editor, because th
 | Version history panel in the style of Google Docs: view, restore, name, download | For OneDrive files | A command, no interface |
 | Real-time co-editing with per-person undo and cursors | Yes | Not yet |
 | Google Fonts library on demand | Cloud fonts | No |
+| Comments panel with filters, @mentions, Assign to and a host comment store | Comments pane, @mentions in Microsoft 365 | Comment cards only |
+| Presence avatars with idle state and following | Co-authoring avatars | Not yet |
+| Phone layout with touch gestures, dictation and camera | Word for Android and iOS | Desktop and browser only |
 
 Host-app controls are also this package's own: which ribbon tabs show, commands the host turns off, the Editing/Reviewing/Viewing mode, Ribbon Display Options, and the user's name.
 

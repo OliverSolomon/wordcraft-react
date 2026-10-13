@@ -66,6 +66,17 @@ Rows marked ✦ are **Extras**: features that are not part of Microsoft Word or 
 | AI providers ✦ | Not available | Your endpoint, or people's own OpenRouter, OpenAI, Anthropic, Gemini or OpenAI-compatible key | Package |
 | AI ribbon button | Not available | Optional sparkle beside Comments (`ai.ribbonButton`) | Patch 0004 |
 
+## Access, comments and presence
+
+| Area | WordCraft | This package | Where |
+|---|---|---|---|
+| Access levels | Restrict Editing (read only, comments, tracked changes) chosen in the document | A `permission` prop (view, comment, suggest, edit) the host sets and changes live, with a chip and a notice; it drives Restrict Editing and the mode, and locks the switches | Package |
+| Comments panel ✦ | Word's comment cards in the margin | Also a panel of threads with filters (Open, Resolved, Mine, Mentions me, author), @mentions with a people picker, Assign to, and a store adapter for every change | Package |
+| Presence avatars ✦ | Collaborators' avatars in the title bar (patch 0002) | Also a row at the bottom right with idle state, a `+n` counter and following, and `onPresenceChange` for the host | Package |
+| Reading the document ✦ | Not exposed to a host | `editor.paragraphs()`, `editor.comments()`, `selectText` and marks over the text (`setMarks`) for host panels | Package |
+| Organisation letterhead | Not available | `ai.letterhead` is the organisation's, read live; a person's edits are a separate override with Reset; `letterheadLocked` and `onLetterheadApplied` | Package |
+| Web Layout width | Always 800pt | Follows the window, as in Word (Mobile View on phones) | Package |
+
 ## Phones and tablets
 
 | Area | WordCraft | This package | Where |
