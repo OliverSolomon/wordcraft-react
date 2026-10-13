@@ -37,6 +37,14 @@ jobs:
         working-directory: site
         run: |
           v=$(node -p "require('../packages/wordcraft-react/package.json').version")
+          # The registry can take a few minutes to show a version that was just published,
+          # so after a release wait for it rather than skipping the deploy.
+          tries=1
+          [ "${{ github.event_name }}" = "workflow_run" ] && tries=20
+          for i in $(seq "$tries"); do
+            [ -n "$(npm view "@gamine/wordcraft-react@$v" version 2>/dev/null)" ] && break
+            [ "$i" -lt "$tries" ] && sleep 30
+          done
           if [ -z "$(npm view "@gamine/wordcraft-react@$v" version 2>/dev/null)" ]; then
             echo "::notice::@gamine/wordcraft-react@$v is not on npm yet; the site builds after the Release workflow publishes it."
             echo "skip=true" >> "$GITHUB_OUTPUT"
