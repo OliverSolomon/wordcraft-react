@@ -9,7 +9,8 @@
     "smoke:mobile": "node smoke-mobile.mjs",
     "smoke:features": "node smoke-features.mjs",
     "collab-server": "node collab-server.mjs",
-    "smoke:collab": "node smoke-collab.mjs"
+    "smoke:collab": "node smoke-collab.mjs",
+    "smoke:extras": "node smoke-extras.mjs"
   },
   "dependencies": {
     "@gamine/wordcraft-react": "file:../../packages/wordcraft-react",

@@ -40,6 +40,16 @@ export const SHOTS = {
   viewer2: shot('access-viewer', 'A viewer: the access chip at the bottom right, and typing refused'),
   commenter: shot('access-commenter', 'A commenter adding a comment through the panel'),
   letterheadOrg: shot('ai-letterhead-org', "AI Studio showing the organisation's letterhead, ready to apply"),
+  structureTable: shot('structure-table', 'A table made from pasted CSV data, sorted with a total, ready to insert'),
+  structureDiagram: shot('structure-diagram', 'A flowchart of a referral process, rendered from Mermaid in the preview'),
+  structureChart: shot('structure-chart', 'A chart preview that goes in as a native Word chart'),
+  slash: shot('slash-menu', 'The slash menu at the start of an empty line'),
+  brandPalette: shot('brand-palette', 'A palette made from a logo and a photo, with roles and contrast'),
+  brandPlacement: shot('brand-placement', 'Logo placement presets on mini pages'),
+  chat: shot('chat', 'Ask this document: an answer citing its passages'),
+  checks: shot('checks', 'Writing checks: a score, readability, tone and suggestions by category'),
+  originality: shot('originality', 'An originality report with a match in the organisation’s own documents'),
+  outline: shot('outline', 'The outline of headings, ready to drag'),
 };
 
 export const SHOWCASES: Record<string, Showcase> = {
@@ -109,6 +119,65 @@ const provider = new WebsocketProvider('wss://collab.example.com', 'brief-42', d
     defaultSkills: ['humaniser', 'british'],
   }}
 />`,
+  },
+  structure: {
+    shots: [SHOTS.structureTable, SHOTS.structureDiagram, SHOTS.structureChart, SHOTS.slash],
+    live: 'ai',
+    caption: 'Ask for a table, a diagram or a chart and get the real thing: a native table, a Mermaid diagram with its source kept, a Word chart. Type / on an empty line for the menu.',
+    code: `<WordcraftEditor
+  ai={{
+    complete,
+    structure: true,
+    mermaid: () => import('mermaid'),
+    pickData: () => pickSheetFromYourApp(),
+    actions: [{ id: 'donor', label: 'Donor paragraph', run: () => [{ type: 'paragraph', text: 'Thank you…' }] }],
+  }}
+/>`,
+  },
+  brand: {
+    shots: [SHOTS.brandPalette, SHOTS.brandPlacement, SHOTS.letterheadOrg, SHOTS.palette],
+    live: 'ai',
+    caption: 'Pick a logo or a photo and get a palette written into the document theme, then put the logo in the header, the footer, behind the text or on a cover page.',
+    code: `<WordcraftEditor
+  ai={{
+    complete,
+    brand: { name: 'Sauti Salama', logo: logoDataUrl },
+    letterhead: { name: 'Sauti Salama', logo: { src: logoDataUrl, placement: 'watermark', opacity: 0.15 } },
+    onPaletteCreated: (palette) => saveForOrganisation(palette),
+  }}
+/>`,
+  },
+  chat: {
+    shots: [SHOTS.chat, SHOTS.aiBar, SHOTS.editor, SHOTS.comments],
+    live: 'ai',
+    caption: 'Questions are answered from the document itself, and every answer cites the passages it used.',
+    code: `<WordcraftEditor ai={{ complete, chat: true, chatStore: myChatStore }} />`,
+  },
+  checks: {
+    shots: [SHOTS.checks, SHOTS.editor, SHOTS.mini, SHOTS.context],
+    live: 'editor',
+    caption: 'Underlines by category with one-click fixes, readability and tone, through engines you choose; the default runs in the browser.',
+    code: `import { WordcraftEditor, plainLanguageChecker, languageTool } from '@gamine/wordcraft-react';
+
+<WordcraftEditor
+  checks={{ checkers: [plainLanguageChecker(), languageTool({ url: 'https://lt.example.org' })], goals: { domain: 'plain' } }}
+/>`,
+  },
+  originality: {
+    shots: [SHOTS.originality, SHOTS.editor, SHOTS.comments, SHOTS.chat],
+    live: 'editor',
+    caption: 'Matches against your own documents first, a service you choose if you want one, and an AI-writing signal that never claims to be a verdict.',
+    code: `<WordcraftEditor
+  originality={{
+    corpus: { search: (text) => fetch('/api/similar', { method: 'POST', body: text }).then((r) => r.json()) },
+  }}
+/>`,
+  },
+  tools: {
+    shots: [SHOTS.outline, SHOTS.checks, SHOTS.editor, SHOTS.mini],
+    live: 'editor',
+    caption: 'An outline to move sections, accessibility with fixes, sources and a bibliography, a word goal, voice typing and translation.',
+    code: `<WordcraftEditor tools={{ outline: true, accessibility: true, sources: true, wordCount: { goal: 1500 }, voice: true, translate: true }} />`,
   },
   'version-history': {
     shots: [SHOTS.versions, SHOTS.editor, SHOTS.collab, SHOTS.mini],
