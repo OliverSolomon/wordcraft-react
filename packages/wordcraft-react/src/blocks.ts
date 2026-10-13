@@ -8,7 +8,7 @@
  */
 import type { WordcraftEditor } from './core.js';
 import type { Palette } from './ai-studio.js';
-import { shade } from './theme.js';
+import { shade, withHash } from './theme.js';
 
 export type ChartType = 'column' | 'bar' | 'line' | 'area' | 'pie' | 'donut' | 'scatter' | 'stacked';
 
@@ -455,7 +455,8 @@ export function inlineHtml(text: string): string {
 const CALLOUT_LABEL = { note: 'Note', tip: 'Tip', warning: 'Warning' } as const;
 
 /** One block (that HTML can carry) as HTML for WordCraft's importer, or null for native objects. */
-export function blockHtml(b: Block, p: Palette): string | null {
+export function blockHtml(b: Block, palette: Palette): string | null {
+  const p = withHash(palette);
   const list = (items: ListItem[], ordered: boolean): string =>
     `<${ordered ? 'ol' : 'ul'}>${items.map((it) => `<li>${inlineHtml(it.text)}${it.children?.length ? list(it.children, !!it.children[0]?.ordered) : ''}</li>`).join('')}</${ordered ? 'ol' : 'ul'}>`;
   switch (b.type) {
@@ -570,12 +571,14 @@ async function insertNative(editor: WordcraftEditor, b: Block, ctx: InsertContex
         dataLabels: b.chart === 'pie' || b.chart === 'donut' || b.categories.length <= 8,
         data: { categories: scatter ? b.categories : b.categories, series: b.series.map((s) => ({ name: s.name, values: s.values })) },
       });
+      // The new chart is selected: alt text goes on it, then the caret moves past it.
       try {
         const alt = chartAlt(b);
         editor.execute('object.altText', { text: alt, title: b.title ?? 'Chart' });
       } catch {
         /* alt text is a nicety */
       }
+      collapse(editor);
       editor.execute('text.newParagraph');
       return;
     }
@@ -583,7 +586,14 @@ async function insertNative(editor: WordcraftEditor, b: Block, ctx: InsertContex
       if (!ctx.renderDiagram) throw new Error('no diagram renderer');
       const img = await ctx.renderDiagram(b, ctx.palette);
       editor.execute('insert.picture', { data: img.png, width: img.width, alt: img.alt });
+      // The Mermaid source rides in the picture's title, so "Edit diagram" works after a save and reopen.
+      try {
+        editor.execute('object.altText', { title: `${DIAGRAM_TITLE}${b.source}` });
+      } catch {
+        /* an older engine: the source stays with the host through onDiagram */
+      }
       ctx.onDiagram?.(img.alt, b.source);
+      collapse(editor);
       editor.execute('text.newParagraph');
       return;
     }
@@ -591,15 +601,29 @@ async function insertNative(editor: WordcraftEditor, b: Block, ctx: InsertContex
       if (!ctx.renderQr) throw new Error('no QR renderer');
       const img = await ctx.renderQr(b);
       editor.execute('insert.picture', { data: img.png, width: img.width, alt: img.alt });
+      collapse(editor);
       editor.execute('text.newParagraph');
       return;
     }
     case 'image': {
       const data = b.src.slice(b.src.indexOf(',') + 1);
       editor.execute('insert.picture', { data, width: b.width, alt: b.alt });
+      collapse(editor);
       editor.execute('text.newParagraph');
       return;
     }
+  }
+}
+
+/** Pictures made from a Mermaid diagram carry this prefix and the source in their title. */
+export const DIAGRAM_TITLE = 'mermaid:';
+
+/** A new object is left selected: put the caret after it so the next Enter doesn't replace it. */
+export function collapse(editor: WordcraftEditor): void {
+  if (editor.getSelectedText()) editor.execute('caret.right');
+  else {
+    const c = editor.caret();
+    if (c?.anchor && c.focus && (c.anchor.offset !== c.focus.offset || c.anchor.path.join() !== c.focus.path.join())) editor.execute('caret.right');
   }
 }
 

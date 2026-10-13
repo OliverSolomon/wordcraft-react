@@ -14,7 +14,7 @@ use wordcraft_engine::Session;
 use wordcraft_ui_egui::{Inbox, Services, UiState, WordApp};
 
 use crate::collab::{CollabState, Peer, parse_color};
-use crate::doc_tools::{Mark, body_offset, comments_json, marks_at, paragraphs_json, parse_marks, pos_at};
+use crate::doc_tools::{Mark, body_offset, comments_json, marks_at, paragraphs_json, parse_marks, pos_at, selected_object};
 use crate::touch_web::TouchState;
 use crate::{MountOptions, autosave_name, document_fonts, merge_json, mime_for};
 
@@ -1104,6 +1104,12 @@ impl WordcraftHandle {
             let sel = &app.session.sel;
             Ok(json!({"anchor": body_offset(doc, &sel.anchor), "focus": body_offset(doc, &sel.focus)}).to_string())
         })
+    }
+
+    /// The selected picture, chart or shape: `{kind, alt, title}`, or `null` (read only).
+    #[wasm_bindgen(js_name = selectedObject)]
+    pub fn selected_object(&self) -> Result<String, JsValue> {
+        self.with_app(|app| Ok(selected_object(&app.session.doc, &app.session.sel.anchor, &app.session.sel.focus).to_string()))
     }
 
     /// Marks over the text: `[{id, path, start, end, color: "#rrggbb", style: "squiggle" |

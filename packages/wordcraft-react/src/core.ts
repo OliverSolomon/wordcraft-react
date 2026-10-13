@@ -416,6 +416,8 @@ export interface WordcraftEditor {
   setMarks(marks: TextMark[]): void;
   /** Where the selection is, as `paragraphs()` counts it; `null` ends are outside the body (a header, a footnote). */
   caret(): CaretInfo | null;
+  /** The selected picture, chart or shape (`kind`, its alt text and title), or `null`. Read only. */
+  selectedObject(): { kind: 'picture' | 'chart' | 'shape'; alt: string; title: string } | null;
   /** Keep a collaborator's caret in view until the person scrolls, clicks or types (`null` stops). */
   followPeer(name: string | null): void;
   /** Run any WordCraft command by id, e.g. `execute('format.bold')`, `execute('text.insert', { text: 'Hi' })`. */
@@ -491,6 +493,7 @@ interface RawHandle {
   selectText?(path: string, start: number, end: number): void;
   setMarks?(json: string): void;
   caret?(): string;
+  selectedObject?(): string;
   followPeer?(name: string | null): void;
   collabStart(clientId: number, state: Uint8Array | null): boolean;
   collabApply(update: Uint8Array): void;
@@ -839,6 +842,10 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     caret() {
       alive();
       return raw.caret ? (JSON.parse(raw.caret()) as CaretInfo) : null;
+    },
+    selectedObject() {
+      alive();
+      return raw.selectedObject ? (JSON.parse(raw.selectedObject()) as ReturnType<WordcraftEditor['selectedObject']>) : null;
     },
     followPeer(name) {
       alive();

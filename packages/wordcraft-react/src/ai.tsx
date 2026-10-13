@@ -41,6 +41,16 @@ import {
   writeStudio,
 } from './ai-studio.js';
 import type { AiSkill, AiStudioState, Letterhead, Palette } from './ai-studio.js';
+import type { LogoSpec } from './letterhead.js';
+import { applyLetterheadPlaced, logoSpec, removeLetterheadPlaced } from './letterhead.js';
+import type { MermaidLoader } from './renderers.js';
+import { setMermaidLoader } from './renderers.js';
+import { BlockPreview, STRUCTURE_ITEMS, StructurePanel } from './structure.js';
+import type { HostAction, StructureKind, StructureOptions } from './structure.js';
+import { insertBlocks, markdownToBlocks } from './blocks.js';
+import { renderDiagram, renderQr } from './renderers.js';
+import { applyTheme } from './theme.js';
+import { LogoPlacementControls, MiniPage, PaletteFromImage } from './studio-brand.js';
 export { describeAiRequest } from './ai-core.js';
 export type { AiAction, AiRequest } from './ai-core.js';
 export { AI_PROVIDERS, completeWith } from './ai-providers.js';
@@ -85,6 +95,36 @@ export interface AiOptions {
   ribbonButton?: boolean;
   /** Called whenever AI Studio's settings change (to keep them on your server, say). */
   onStudioChange?: (state: AiStudioState) => void;
+
+  // ----- brand (Extras) -----
+  /** Shorthand: your logo and palette in one object, so the letterhead and palette are ready. */
+  brand?: { logo?: string | LogoSpec; palette?: Palette; name?: string };
+  /** Offer pictures from your app's files ("From your files") for logos and palettes. */
+  pickImage?: () => Promise<Blob | string | null>;
+  /** Called when someone changes the logo or its placement in AI Studio. */
+  onLogoChanged?: (logo: LogoSpec | null) => void;
+  /** Called when someone saves a palette made from a logo or photo (to store it for the whole organisation; pass it back in `palettes`). */
+  onPaletteCreated?: (palette: Palette) => void;
+  /** Theme fonts offered with a palette: written to the document theme's font scheme. */
+  fonts?: { heading: string; body?: string };
+
+  // ----- structure (Extras) -----
+  /**
+   * AI that builds structure: answers become real headings, lists and tables; an Insert menu
+   * and the `/` slash menu make tables, diagrams, charts, checklists, callouts, equations, QR
+   * codes, images and tables of contents. Default: off.
+   */
+  structure?: boolean;
+  /** Load Mermaid for diagrams, e.g. `() => import('mermaid')` (it loads only when first used). */
+  mermaid?: MermaidLoader;
+  /** Data from your app (Sheets or Excel files) for tables and charts. */
+  pickData?: StructureOptions['pickData'];
+  /** Make an image from a prompt. */
+  generateImage?: StructureOptions['generateImage'];
+  /** Find an image (your library, or a licensed service). */
+  imageSearch?: StructureOptions['imageSearch'];
+  /** Your own actions in the Insert and slash menus, e.g. "Insert the grant budget table from Finance". */
+  actions?: HostAction[];
 }
 
 type Chip = [AiAction, string];
@@ -179,6 +219,12 @@ export interface AiBarProps {
   dark?: boolean;
   /** The person may not change the text (viewers, commenters): answers can be read and copied, not inserted. */
   readOnly?: boolean;
+  /** Edits become tracked suggestions (Suggesting): structured inserts say so. */
+  suggest?: boolean;
+  /** Open the structure panel from outside (the slash menu): a kind, a host action id, or a diagram to edit. */
+  request?: { kind: StructureKind; actionId?: string; editDiagram?: string; nonce: number } | null;
+  /** Called after a diagram is inserted, with its alt text and Mermaid source ("Edit diagram" finds it again). */
+  onDiagram?: (alt: string, source: string) => void;
 }
 
 /** Is any source of answers set up: the app's, or the person's own key? */
@@ -189,7 +235,7 @@ export function aiReady(options: AiOptions): boolean {
 type StudioTab = 'skills' | 'letterhead' | 'palette' | 'model';
 
 /** The AI bar and its launcher. `<WordcraftEditor ai={...} />` renders it for you. */
-export function AiBar({ editor, options, open, onOpenChange, launcher = true, bottom = 30, dark, readOnly = false }: AiBarProps) {
+export function AiBar({ editor, options, open, onOpenChange, launcher = true, bottom = 30, dark, readOnly = false, suggest = false, request, onDiagram }: AiBarProps) {
   const allowUserKey = options.allowUserKey ?? true;
   const showStudio = options.studio ?? true;
   const [own, setOwn] = useState<AiProviderConfig | null>(null);
@@ -203,8 +249,10 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [selection, setSelection] = useState('');
-  const [menu, setMenu] = useState<'' | 'more' | 'templates' | 'dots'>('');
+  const [menu, setMenu] = useState<'' | 'more' | 'templates' | 'dots' | 'insert'>('');
   const [tab, setTab] = useState<StudioTab | null>(null);
+  const [structure, setStructure] = useState<{ kind: StructureKind; prompt?: string; action?: HostAction | null; editDiagram?: { source: string } | null } | null>(null);
+  const [paletteSeed, setPaletteSeed] = useState<{ src: string; name: string } | null>(null);
   const last = useRef<{ action: AiAction; prompt: string } | null>(null);
   const abort = useRef<AbortController | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -236,9 +284,27 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
   const ready = !!active || !!options.complete;
   const name = options.name ?? (active ? AI_PROVIDERS[active.provider].name.replace(/ \(.*\)$/, '') : 'AI');
   const skillsOn = useMemo(() => (showStudio ? activeSkills(studio, options.skills) : []), [studio, options.skills, showStudio]);
-  const palette = paletteFor(studio, options.palettes);
+  const extraPalettes = useMemo(() => (options.brand?.palette ? [options.brand.palette, ...(options.palettes ?? []).filter((p) => p.id !== options.brand?.palette?.id)] : (options.palettes ?? [])), [options.brand?.palette, options.palettes]);
+  const palette = paletteFor(studio, extraPalettes);
+  // `brand` fills in the organisation's letterhead: its logo, and a name when there is no letterhead.
+  const organisation: Letterhead | null = options.letterhead
+    ? { ...options.letterhead, logo: options.letterhead.logo ?? options.brand?.logo }
+    : options.brand?.name
+      ? { name: options.brand.name, logo: options.brand.logo }
+      : null;
   // Like the palette, worked out on every render: the organisation's letterhead may arrive late.
-  const letterhead = effectiveLetterhead(studio, options.letterhead, options.letterheadLocked);
+  const letterhead = effectiveLetterhead(studio, organisation, options.letterheadLocked);
+  useEffect(() => setMermaidLoader(options.mermaid), [options.mermaid]);
+  const structureOn = !!options.structure && !readOnly;
+
+  // The slash menu (or the host) asks for the structure panel.
+  useEffect(() => {
+    if (!request) return;
+    const action = request.actionId ? options.actions?.find((a) => a.id === request.actionId) ?? null : null;
+    setStructure({ kind: request.kind, action, editDiagram: request.editDiagram ? { source: request.editDiagram } : null });
+    setTab(null);
+    onOpenChange(true);
+  }, [request?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshSelection = useCallback(() => {
     if (editor && !editor.destroyed) setSelection(editor.getSelectedText().trim());
@@ -261,6 +327,7 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
     } else {
       reset();
       setTab(null);
+      setStructure(null);
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -293,7 +360,7 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
         action,
         selection: sel,
         document: editor.getText(),
-        instructions: showStudio ? studioInstructions(skillsOn, letterhead) : '',
+        instructions: `${showStudio ? studioInstructions(skillsOn, letterhead) : ''}${structureOn ? `${showStudio ? '\n\n' : ''}You may use Markdown for structure (# headings, - lists, | tables |, > quotes, \`\`\`mermaid diagrams) when the request calls for it.` : ''}`,
         skills: skillsOn.map((s) => s.name),
         signal: ctl.signal,
       };
@@ -317,14 +384,27 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
     }
   };
 
-  const accept = (mode: 'replace' | 'below') => {
+  // With structure on, an answer in Markdown goes in as real headings, lists and tables.
+  const richBlocks = useMemo(() => {
+    if (!structureOn || !result || busy) return null;
+    const b = markdownToBlocks(result);
+    return b.some((x) => x.type !== 'paragraph') ? b : null;
+  }, [structureOn, result, busy]);
+
+  const accept = async (mode: 'replace' | 'below') => {
     if (!editor || editor.destroyed || !result || readOnly) return;
     if (mode === 'below' && selection) {
       // Keep the selection and add the text after it, in a new paragraph.
       editor.execute('caret.right');
       editor.execute('text.newParagraph');
     }
-    insertText(editor, result.trim());
+    try {
+      if (richBlocks) await insertBlocks(editor, richBlocks, { palette, renderDiagram, renderQr, onDiagram });
+      else insertText(editor, result.trim());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return;
+    }
     reset();
     setPrompt('');
     close();
@@ -385,7 +465,24 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
   ];
 
   let panel: ReactNode = null;
-  if (tab) {
+  if (structure && editor && !tab) {
+    panel = (
+      <StructurePanel
+        key={`${structure.kind}-${structure.action?.id ?? ''}-${request?.nonce ?? ''}`}
+        editor={editor}
+        kind={structure.kind}
+        ai={ready ? { complete: options.complete, provider: options.provider, allowUserKey, instructions: showStudio ? studioInstructions(skillsOn, letterhead) : '' } : null}
+        palette={palette}
+        options={{ pickData: options.pickData, generateImage: options.generateImage, imageSearch: options.imageSearch, actions: options.actions }}
+        suggest={suggest}
+        initialPrompt={structure.prompt ?? prompt}
+        action={structure.action}
+        editDiagram={structure.editDiagram}
+        onDiagram={onDiagram}
+        onClose={() => setStructure(null)}
+      />
+    );
+  } else if (tab) {
     panel = (
       <section className="wcai-card wcai-studio" aria-label="AI Studio">
         <header className="wcai-studio-head">
@@ -405,16 +502,34 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
         </header>
         <div className="wcai-studio-body">
           {tab === 'skills' && <SkillsPage studio={studio} setStudio={setStudio} extra={options.skills ?? []} />}
-          {tab === 'letterhead' && <LetterheadPage
+          {tab === 'letterhead' && (
+            <LetterheadPage
               studio={studio}
               setStudio={setStudio}
               palette={palette}
               editor={editor}
-              organisation={options.letterhead ?? null}
+              organisation={organisation}
               locked={!!options.letterheadLocked}
               onApplied={options.onLetterheadApplied}
-            />}
-          {tab === 'palette' && <PalettePage studio={studio} setStudio={setStudio} extra={options.palettes ?? []} editor={editor} />}
+              onLogoChanged={options.onLogoChanged}
+              onColorsFrom={(src) => {
+                setPaletteSeed({ src, name: 'logo' });
+                setTab('palette');
+              }}
+            />
+          )}
+          {tab === 'palette' && (
+            <PalettePage
+              studio={studio}
+              setStudio={setStudio}
+              extra={extraPalettes}
+              editor={editor}
+              seed={paletteSeed}
+              pickImage={options.pickImage}
+              fonts={options.fonts}
+              onPaletteCreated={options.onPaletteCreated}
+            />
+          )}
           {tab === 'model' && (
             <ModelPage
               own={own}
@@ -449,7 +564,11 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
             <Icon d={I.close} size={18} />
           </button>
         </header>
-        <div className={`wcai-result-text${error ? ' wcai-error' : ''}`}>{error || result || <span className="wcai-dots" aria-label="Writing" />}</div>
+        {richBlocks && !error ? (
+          <BlockPreview blocks={richBlocks} palette={palette} />
+        ) : (
+          <div className={`wcai-result-text${error ? ' wcai-error' : ''}`}>{error || result || <span className="wcai-dots" aria-label="Writing" />}</div>
+        )}
         {error && allowUserKey && !busy && (
           <div className="wcai-actions">
             <button type="button" className="wcai-btn" onClick={() => setTab('model')}>
@@ -464,12 +583,12 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
                 Copy
               </button>
             ) : (
-              <button type="button" className="wcai-btn wcai-primary" onClick={() => accept('replace')}>
+              <button type="button" className="wcai-btn wcai-primary" onClick={() => void accept('replace')}>
                 {selection ? 'Replace' : 'Insert'}
               </button>
             )}
             {selection && !readOnly && (
-              <button type="button" className="wcai-btn" onClick={() => accept('below')}>
+              <button type="button" className="wcai-btn" onClick={() => void accept('below')}>
                 Insert below
               </button>
             )}
@@ -502,7 +621,7 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
         onPointerEnter={() => !busy && !result && refreshSelection()}
       >
         {panel}
-        {!tab && !showResult && (
+        {!tab && !showResult && !structure && (
           <div className="wcai-chips">
             {chips.map(([action, label]) => (
               <button key={action} type="button" className="wcai-chip" onClick={() => void run(action, prompt.trim())}>
@@ -523,6 +642,46 @@ export function AiBar({ editor, options, open, onOpenChange, launcher = true, bo
                 </div>
               )}
             </span>
+            {structureOn && (
+              <span className="wcai-anchor">
+                <button type="button" className="wcai-chip" aria-expanded={menu === 'insert'} onClick={() => setMenu(menu === 'insert' ? '' : 'insert')}>
+                  Insert <Icon d={I.down} size={16} />
+                </button>
+                {menu === 'insert' && (
+                  <div role="menu" className="wcai-menu wcai-menu-center">
+                    {STRUCTURE_ITEMS.map((it) => (
+                      <button
+                        key={it.kind}
+                        role="menuitem"
+                        type="button"
+                        className="wcai-item"
+                        onClick={() => {
+                          setMenu('');
+                          setStructure({ kind: it.kind, prompt: prompt.trim() });
+                        }}
+                      >
+                        <span aria-hidden="true" style={{ width: 20, display: 'inline-block' }}>{it.icon}</span> {it.label}
+                      </button>
+                    ))}
+                    {(options.actions ?? []).length > 0 && <div className="wcai-sep" />}
+                    {(options.actions ?? []).map((a) => (
+                      <button
+                        key={a.id}
+                        role="menuitem"
+                        type="button"
+                        className="wcai-item"
+                        onClick={() => {
+                          setMenu('');
+                          setStructure({ kind: 'free', action: a });
+                        }}
+                      >
+                        <span aria-hidden="true" style={{ width: 20, display: 'inline-block' }}>{a.icon ?? '✦'}</span> {a.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </span>
+            )}
           </div>
         )}
         <div className="wcai-pill">
@@ -745,6 +904,8 @@ function LetterheadPage({
   organisation,
   locked,
   onApplied,
+  onLogoChanged,
+  onColorsFrom,
 }: {
   studio: AiStudioState;
   setStudio: SetStudio;
@@ -753,13 +914,19 @@ function LetterheadPage({
   organisation: Letterhead | null;
   locked: boolean;
   onApplied?: (lh: Letterhead) => void;
+  onLogoChanged?: (logo: LogoSpec | null) => void;
+  onColorsFrom?: (src: string) => void;
 }) {
   const effective = effectiveLetterhead(studio, organisation, locked);
   const lh: Letterhead = effective ?? { name: '', align: 'left', rule: true };
   const hasOrg = validLetterhead(organisation);
   const overridden = !locked && !!studio.letterheadOverride && hasOrg && !sameLetterhead(studio.letterheadOverride, organisation);
   const [note, setNote] = useState('');
+  const [placing, setPlacing] = useState(false);
+  const [busy, setBusy] = useState(false);
   const file = useRef<HTMLInputElement>(null);
+  const partnerFile = useRef<HTMLInputElement>(null);
+  const spec = logoSpec(lh);
   // An edit starts from the letterhead shown (the organisation's, say), so toggling the rule keeps
   // its name, tagline, address and logo. An edit that lands back on the organisation's drops the
   // override.
@@ -779,17 +946,41 @@ function LetterheadPage({
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => set({ logo: String(reader.result) });
+    reader.onload = () => {
+      const src = String(reader.result);
+      // Keep the placement when the picture changes; a new logo starts where the old one was.
+      const next: string | LogoSpec = typeof lh.logo === 'object' && lh.logo ? { ...lh.logo, src } : src;
+      set({ logo: next });
+      onLogoChanged?.(typeof next === 'string' ? { src: next } : next);
+    };
     reader.readAsDataURL(f);
   };
-  const apply = () => {
+  const onPartner = (e: ChangeEvent<HTMLInputElement>) => {
+    const fs = Array.from(e.target.files ?? []).filter((f) => f.size <= 1_500_000);
+    e.target.value = '';
+    Promise.all(fs.map((f) => new Promise<string>((ok) => {
+      const r = new FileReader();
+      r.onload = () => ok(String(r.result));
+      r.readAsDataURL(f);
+    }))).then((srcs) => set({ partners: [...(lh.partners ?? []), ...srcs].slice(0, 6) }));
+  };
+  const setSpec = (next: LogoSpec) => {
+    set({ logo: next });
+    onLogoChanged?.(next);
+  };
+  const apply = async () => {
     if (!editor || editor.destroyed || !lh.name.trim()) return;
+    setBusy(true);
     try {
-      applyLetterhead(editor, lh, palette);
-      setNote('Letterhead added to the header.');
+      // A placed logo or partner logos use the placement writer; a plain letterhead keeps the original one.
+      if (typeof lh.logo === 'object' || lh.partners?.length || (typeof lh.logo === 'string' && lh.logo.startsWith('data:image/svg'))) await applyLetterheadPlaced(editor, lh, palette);
+      else applyLetterhead(editor, lh, palette);
+      setNote(spec?.placement === 'watermark' ? 'Letterhead and watermark added.' : 'Letterhead added to the document.');
       onApplied?.(lh);
     } catch (e) {
       setNote(`Couldn’t add the letterhead: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
     }
   };
   const hex = (h: string) => `#${h}`;
@@ -845,19 +1036,47 @@ function LetterheadPage({
               </button>
             )}
             {lh.logo && !locked && (
-              <button type="button" className="wcai-btn wcai-ghost" onClick={() => set({ logo: undefined })}>
+              <button type="button" className="wcai-btn wcai-ghost" onClick={() => (set({ logo: undefined }), onLogoChanged?.(null))}>
                 Remove logo
               </button>
             )}
+            {spec && (
+              <button type="button" className="wcai-btn" aria-expanded={placing} onClick={() => setPlacing(!placing)}>
+                Placement
+              </button>
+            )}
+            {spec && onColorsFrom && (
+              <button type="button" className="wcai-btn" onClick={() => onColorsFrom(spec.src)}>
+                Colours from this logo
+              </button>
+            )}
+            {!locked && (
+              <button type="button" className="wcai-btn wcai-ghost" onClick={() => partnerFile.current?.click()}>
+                Partner logos{lh.partners?.length ? ` (${lh.partners.length})` : ''}
+              </button>
+            )}
+            {!locked && !!lh.partners?.length && (
+              <button type="button" className="wcai-btn wcai-ghost" onClick={() => set({ partners: undefined })}>
+                Clear partners
+              </button>
+            )}
+            <input ref={partnerFile} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" multiple hidden onChange={onPartner} />
             <label className="wcai-check">
               <input type="checkbox" disabled={locked} checked={lh.rule !== false} onChange={(e) => set({ rule: e.target.checked })} /> Accent rule
             </label>
-            <input ref={file} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onChange={onLogo} />
+            <input ref={file} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" hidden onChange={onLogo} />
           </div>
+          {placing && spec && <LogoPlacementControls spec={{ placement: 'header-left', ...spec }} disabled={locked} accent={`#${palette.accent}`} onChange={setSpec} />}
         </div>
         <div className="wcai-preview" aria-label="Preview">
           <div className="wcai-paper" style={{ textAlign: lh.align ?? 'left', fontFamily: font }}>
-            {lh.logo && <img src={lh.logo} alt="" style={{ width: Math.round((lh.logoWidth ?? 48) * 1.1), maxHeight: 64, objectFit: 'contain', display: 'inline-block', marginBottom: 6 }} />}
+            {spec && spec.placement && spec.placement !== 'header-left' && spec.placement !== 'header-center' && spec.placement !== 'header-right' ? (
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
+                <MiniPage placement={spec.placement} src={spec.src} opacity={spec.opacity ?? (spec.placement === 'watermark' ? 0.15 : 1)} rotation={spec.rotation ?? 0} accent={`#${palette.accent}`} />
+              </div>
+            ) : (
+              spec && <img src={spec.src} alt="" style={{ width: Math.round((spec.size ?? lh.logoWidth ?? 48) * 1.1), maxHeight: 64, objectFit: 'contain', display: 'inline-block', marginBottom: 6 }} />
+            )}
             <div style={{ color: hex(palette.primary), fontWeight: 700, fontSize: 20, lineHeight: 1.2 }}>{lh.name || 'Your organisation'}</div>
             {lh.tagline && <div style={{ color: hex(palette.secondary), fontStyle: 'italic', fontSize: 12, marginTop: 2 }}>{lh.tagline}</div>}
             {(lh.address || lh.contact) && (
@@ -895,15 +1114,16 @@ function LetterheadPage({
             className="wcai-btn wcai-ghost"
             onClick={() => {
               if (editor && !editor.destroyed) {
+                removeLetterheadPlaced(editor);
                 removeLetterhead(editor);
-                setNote('Header removed.');
+                setNote('Letterhead removed.');
               }
             }}
           >
             Remove from document
           </button>
-          <button type="button" className="wcai-btn wcai-primary" disabled={!lh.name.trim()} onClick={apply}>
-            Apply to document
+          <button type="button" className="wcai-btn wcai-primary" disabled={!lh.name.trim() || busy} onClick={() => void apply()}>
+            {busy ? 'Applying…' : 'Apply to document'}
           </button>
         </span>
       </div>
@@ -911,10 +1131,29 @@ function LetterheadPage({
   );
 }
 
-function PalettePage({ studio, setStudio, extra, editor }: { studio: AiStudioState; setStudio: SetStudio; extra: Palette[]; editor: WordcraftEditor | null }) {
+function PalettePage({
+  studio,
+  setStudio,
+  extra,
+  editor,
+  seed,
+  pickImage,
+  fonts,
+  onPaletteCreated,
+}: {
+  studio: AiStudioState;
+  setStudio: SetStudio;
+  extra: Palette[];
+  editor: WordcraftEditor | null;
+  seed?: { src: string; name: string } | null;
+  pickImage?: () => Promise<Blob | string | null>;
+  fonts?: { heading: string; body?: string };
+  onPaletteCreated?: (p: Palette) => void;
+}) {
   const [note, setNote] = useState('');
+  const [fromImage, setFromImage] = useState(!!seed);
   const custom: Palette = studio.customPalette ?? { id: 'custom', name: 'Your palette', primary: '1F3A5F', secondary: '3D6D99', accent: 'F2A541', muted: '6B7280' };
-  const all = [...extra, ...BUILT_IN_PALETTES];
+  const all = [...extra, ...(studio.savedPalettes ?? []), ...BUILT_IN_PALETTES];
   const chosen = paletteFor(studio, extra);
   const swatches = (p: Palette) => (
     <span className="wcai-swatches">
@@ -928,7 +1167,31 @@ function PalettePage({ studio, setStudio, extra, editor }: { studio: AiStudioSta
 
   return (
     <div className="wcai-page">
-      <p className="wcai-lead">Brand colours for the title and headings, and for the letterhead.</p>
+      <div className="wcai-actions wcai-between">
+        <p className="wcai-lead" style={{ margin: 0 }}>Brand colours for the document theme, the headings and the letterhead.</p>
+        <button type="button" className="wcai-btn" aria-expanded={fromImage} onClick={() => setFromImage(!fromImage)}>
+          From a logo or photo
+        </button>
+      </div>
+      {fromImage && (
+        <PaletteFromImage
+          key={seed?.src ?? 'none'}
+          initial={seed}
+          pickImage={pickImage}
+          fonts={fonts}
+          onSave={(p) => {
+            setStudio((s) => ({ ...s, palette: p.id, savedPalettes: [p, ...(s.savedPalettes ?? []).filter((x) => x.id !== p.id)].slice(0, 24) }));
+            onPaletteCreated?.(p);
+          }}
+          onApply={(p, scope, f) => {
+            if (!editor || editor.destroyed) return;
+            setStudio((s) => ({ ...s, palette: p.id, savedPalettes: [p, ...(s.savedPalettes ?? []).filter((x) => x.id !== p.id)].slice(0, 24) }));
+            if (scope === 'headings') applyPalette(editor, p);
+            else applyTheme(editor, p, { scope: 'document', fonts: f });
+            setNote(scope === 'headings' ? `${p.name} applied to the title and headings.` : `${p.name} is now the document theme (Design › Colors shows it).`);
+          }}
+        />
+      )}
       <div className="wcai-palettes" role="radiogroup" aria-label="Palette">
         {all.map((p) => (
           <button key={p.id} type="button" role="radio" aria-checked={chosen.id === p.id} className="wcai-palette" onClick={() => setStudio((s) => ({ ...s, palette: p.id }))}>
@@ -957,17 +1220,30 @@ function PalettePage({ studio, setStudio, extra, editor }: { studio: AiStudioSta
         <span className="wcai-note-inline" role="status">
           {note}
         </span>
-        <button
-          type="button"
-          className="wcai-btn wcai-primary"
-          onClick={() => {
-            if (!editor || editor.destroyed) return;
-            applyPalette(editor, chosen);
-            setNote(`${chosen.name} applied to the title and headings.`);
-          }}
-        >
-          Apply to headings
-        </button>
+        <span className="wcai-actions">
+          <button
+            type="button"
+            className="wcai-btn"
+            onClick={() => {
+              if (!editor || editor.destroyed) return;
+              applyPalette(editor, chosen);
+              setNote(`${chosen.name} applied to the title and headings.`);
+            }}
+          >
+            Apply to headings
+          </button>
+          <button
+            type="button"
+            className="wcai-btn wcai-primary"
+            onClick={() => {
+              if (!editor || editor.destroyed) return;
+              applyTheme(editor, chosen, { scope: 'document', fonts });
+              setNote(`${chosen.name} is now the document theme.`);
+            }}
+          >
+            Apply to document
+          </button>
+        </span>
       </div>
     </div>
   );

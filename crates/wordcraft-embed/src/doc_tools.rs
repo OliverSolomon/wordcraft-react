@@ -98,6 +98,32 @@ pub fn body_offset(doc: &Document, at: &Pos) -> Value {
     }
 }
 
+/// The picture, chart or shape the selection holds (or the one just before the caret):
+/// `{kind, alt, title}`, or `null`. Read only: nothing in the document changes.
+pub fn selected_object(doc: &Document, anchor: &Pos, focus: &Pos) -> Value {
+    let (a, b) = if (anchor.path.0.as_slice(), anchor.off) <= (focus.path.0.as_slice(), focus.off) { (anchor, focus) } else { (focus, anchor) };
+    if a.story != b.story || a.path != b.path {
+        return Value::Null;
+    }
+    let Some(p) = doc.para(a.story, &a.path) else { return Value::Null };
+    for off in p.object_offsets() {
+        let inside = if a.off == b.off { off + wordcraft_doc::para::OBJ.len_utf8() == a.off } else { off >= a.off && off < b.off };
+        if !inside {
+            continue;
+        }
+        if let Some(o) = p.object_at(off).filter(|o| o.is_drawing()) {
+            let kind = match o {
+                wordcraft_doc::para::InlineObject::Image { .. } => "picture",
+                wordcraft_doc::para::InlineObject::Graphic { .. } => "chart",
+                _ => "shape",
+            };
+            let title = o.frame().map(|(_, _, f)| f.alt.title.clone()).unwrap_or_default();
+            return json!({"kind": kind, "alt": o.alt_text(), "title": title});
+        }
+    }
+    Value::Null
+}
+
 /// `[{path, text, style, styleName, heading}]` for every body paragraph (`heading`: the outline
 /// level 1 to 9 of a heading style, else 0).
 pub fn paragraphs_json(doc: &Document) -> Value {

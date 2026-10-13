@@ -103,6 +103,20 @@ export function shade(hex: string, amount: number): string {
   return rgbToHex(...labToRgb(lab));
 }
 
+/** `#rrggbb` whether the colour was stored with a `#` or without (the package's palettes store `RRGGBB`). */
+export const css = (c: string) => `#${c.replace('#', '').slice(0, 6)}`;
+
+/** The palette with every colour as `#rrggbb`, for HTML, SVG and Mermaid. */
+export function withHash(p: Palette): Palette {
+  return { ...p, primary: css(p.primary), secondary: css(p.secondary), accent: css(p.accent), muted: css(p.muted) };
+}
+
+/** The palette as the package stores it (`RRGGBB`, upper case). */
+export function stored(p: Palette): Palette {
+  const u = (c: string) => c.replace('#', '').slice(0, 6).toUpperCase();
+  return { ...p, primary: u(p.primary), secondary: u(p.secondary), accent: u(p.accent), muted: u(p.muted) };
+}
+
 // ----- extraction -----------------------------------------------------------------------------
 
 export type ImageInput = Blob | string | HTMLImageElement | ImageBitmap;
@@ -265,13 +279,13 @@ export function assignRoles(swatches: Swatch[]): Record<PaletteRole, string> {
 
 /** A palette from the roles, with `source` naming where it came from. */
 export function paletteFrom(roles: Record<PaletteRole, string>, name: string, source?: string): Palette & { source?: string } {
-  return { id: `custom-${Date.now().toString(36)}`, name, ...roles, source };
+  return { ...stored({ id: `custom-${Date.now().toString(36)}`, name, ...roles }), source };
 }
 
 /** The dark variant of a palette: the same hues, lightened to read on a dark page. */
 export function darkVariant(p: Palette): Palette {
   const on = '#1f1f1f';
-  return {
+  return stored({
     ...p,
     id: `${p.id}-dark`,
     name: `${p.name} (dark)`,
@@ -279,26 +293,26 @@ export function darkVariant(p: Palette): Palette {
     secondary: fixContrast(p.secondary, on, 3),
     accent: fixContrast(p.accent, on, 3),
     muted: fixContrast(p.muted, on, 3),
-  };
+  });
 }
 
 /** Problems a palette has on a page colour (`#ffffff` by default). */
 export function paletteWarnings(p: Palette, page = '#ffffff'): Array<{ role: PaletteRole; ratio: number; need: number }> {
   const need: Record<PaletteRole, number> = { primary: 4.5, secondary: 4.5, accent: 3, muted: 3 };
   return (['primary', 'secondary', 'accent', 'muted'] as PaletteRole[])
-    .map((role) => ({ role, ratio: contrast(p[role], page), need: need[role] }))
+    .map((role) => ({ role, ratio: contrast(css(p[role]), page), need: need[role] }))
     .filter((w) => w.ratio < w.need);
 }
 
 /** The palette with every role made readable on `page`. */
 export function fixPalette(p: Palette, page = '#ffffff'): Palette {
-  return {
+  return stored({
     ...p,
     primary: fixContrast(p.primary, page, 4.5),
     secondary: fixContrast(p.secondary, page, 4.5),
     accent: fixContrast(p.accent, page, 3),
     muted: fixContrast(p.muted, page, 3),
-  };
+  });
 }
 
 // ----- the document theme ---------------------------------------------------------------------
@@ -317,8 +331,9 @@ export interface ThemeFonts {
  * quotes, the table header and the letterhead rule. With `scope: 'headings'` only the title and
  * headings change (the light option).
  */
-export function applyTheme(editor: WordcraftEditor, p: Palette, options: { scope?: 'document' | 'headings'; fonts?: ThemeFonts; name?: string } = {}): void {
+export function applyTheme(editor: WordcraftEditor, palette: Palette, options: { scope?: 'document' | 'headings'; fonts?: ThemeFonts; name?: string } = {}): void {
   const scope = options.scope ?? 'document';
+  const p = withHash(palette);
   const style = (name: string, props: Record<string, unknown>) => {
     try {
       editor.execute('styles.modify', { style: name, ...props });

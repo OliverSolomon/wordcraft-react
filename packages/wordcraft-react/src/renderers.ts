@@ -7,6 +7,7 @@ import type { Block, RenderedImage } from './blocks.js';
 import type { Palette } from './ai-studio.js';
 import { qrSvg } from './qr.js';
 import { esc } from './blocks.js';
+import { withHash } from './theme.js';
 
 /** What the package needs from Mermaid (`import('mermaid')` satisfies it). */
 export interface MermaidLike {
@@ -39,7 +40,8 @@ async function mermaid(): Promise<MermaidLike> {
 const MAX_DIAGRAM_NODES = 150;
 
 /** Render Mermaid source to SVG, strictly (no scripts, no clicks, no external fetches), themed with the palette. */
-export async function renderMermaidSvg(source: string, p: Palette, font = 'Aptos, Segoe UI, Arial, sans-serif'): Promise<string> {
+export async function renderMermaidSvg(source: string, palette: Palette, font = 'Aptos, Segoe UI, Arial, sans-serif'): Promise<string> {
+  const p = withHash(palette);
   const src = source.trim();
   if (src.length > 8000) throw new Error('The diagram is too large (8,000 characters at most).');
   const nodes = (src.match(/-->|---|->>|-\.->|==>/g) ?? []).length;
@@ -132,7 +134,8 @@ export async function renderQr(b: Extract<Block, { type: 'qr' }>): Promise<Rende
 // ----- chart preview (the document gets a native Word chart) ----------------------------------
 
 /** An SVG picture of a chart block, for the result card's preview. */
-export function chartSvg(b: Extract<Block, { type: 'chart' }>, p: Palette, w = 520, h = 300): string {
+export function chartSvg(b: Extract<Block, { type: 'chart' }>, palette: Palette, w = 520, h = 300): string {
+  const p = withHash(palette);
   const colors = [p.primary, p.secondary, p.accent, p.muted, tint(p.primary, 0.4), tint(p.secondary, 0.4), tint(p.accent, 0.4), '#7f7f7f'];
   const font = 'font-family="Aptos, Segoe UI, Arial, sans-serif"';
   const title = b.title ? `<text x="${w / 2}" y="20" text-anchor="middle" font-size="14" font-weight="600" ${font}>${esc(b.title)}</text>` : '';
