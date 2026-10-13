@@ -7,6 +7,7 @@
     "start": "next start",
     "smoke": "node smoke-test.mjs",
     "smoke:mobile": "node smoke-mobile.mjs",
+    "smoke:features": "node smoke-features.mjs",
     "collab-server": "node collab-server.mjs",
     "smoke:collab": "node smoke-collab.mjs"
   },
