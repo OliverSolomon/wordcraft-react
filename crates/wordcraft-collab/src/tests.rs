@@ -26,6 +26,13 @@ impl Person {
         Person { s: Session::new(doc), c }
     }
 
+    /// Every edit at the same instant: all inside the undo grouping window.
+    fn first_frozen(id: u64, doc: Document) -> Person {
+        let mut c = Collab::new(id, Arc::new(|| 1_000));
+        c.seed(&doc);
+        Person { s: Session::new(doc), c }
+    }
+
     fn join(id: u64, from: &Person) -> Person {
         let mut c = Collab::new(id, clock());
         let (doc, _) = c.apply_remote(&from.c.encode_state(), &[]).unwrap();
@@ -200,6 +207,29 @@ fn undo_takes_back_only_my_change() {
     a.undo();
     sync(&mut [&mut a, &mut b]);
     assert_eq!(a.text(0), "gamma alpha", "A's undo removes only A's text");
+    assert_converged(&a, &b);
+}
+
+/// Two edits inside the grouping window, with a peer's edit between them, are two undo steps
+/// (the browser test once saw one Undo take back both).
+#[test]
+fn a_remote_edit_closes_my_undo_step() {
+    let mut a = Person::first_frozen(1, simple(&["one"]));
+    let mut b = Person::join(2, &a);
+    a.at(0, 3);
+    a.run("text.insert", json!({"text": " two"}));
+    sync(&mut [&mut a, &mut b]);
+    b.at(0, 0);
+    b.run("text.insert", json!({"text": "zero "}));
+    sync(&mut [&mut a, &mut b]);
+    let end = a.text(0).len();
+    a.at(0, end);
+    a.run("text.insert", json!({"text": " three"}));
+    sync(&mut [&mut a, &mut b]);
+    assert_eq!(a.text(0), "zero one two three");
+    a.undo();
+    sync(&mut [&mut a, &mut b]);
+    assert_eq!(a.text(0), "zero one two", "only A's last edit goes");
     assert_converged(&a, &b);
 }
 
