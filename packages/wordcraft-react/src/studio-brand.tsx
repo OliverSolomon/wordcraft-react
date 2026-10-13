@@ -368,6 +368,15 @@ export function MiniPage({ placement, src, opacity = 1, rotation = 0, accent = '
   );
 }
 
+/** A size that suits the placement when switching to it: a header logo is small, a watermark or cover large. */
+function sizeFor(to: LogoPlacement, spec: LogoSpec): Partial<LogoSpec> {
+  const size = spec.size ?? 48;
+  const big = to === 'watermark' || to === 'cover';
+  if (big && size < 120) return { size: to === 'watermark' ? 300 : 200 };
+  if (!big && size > 200) return { size: to.startsWith('side') ? 60 : 48 };
+  return {};
+}
+
 export function LogoPlacementControls({ spec, onChange, disabled, accent }: { spec: LogoSpec; onChange: (s: LogoSpec) => void; disabled?: boolean; accent?: string }) {
   const placement = spec.placement ?? 'header-left';
   const wm = placement === 'watermark';
@@ -379,7 +388,7 @@ export function LogoPlacementControls({ spec, onChange, disabled, accent }: { sp
       <style>{CSS}</style>
       <div className="wcbr-places" role="radiogroup" aria-label="Logo placement">
         {PLACEMENTS.map((p) => (
-          <button key={p.id} type="button" role="radio" aria-checked={placement === p.id} className="wcbr-place" disabled={disabled} onClick={() => set({ placement: p.id, ...(p.id === 'watermark' && spec.opacity === undefined ? { opacity: 0.15 } : {}) })}>
+          <button key={p.id} type="button" role="radio" aria-checked={placement === p.id} className="wcbr-place" disabled={disabled} onClick={() => set({ placement: p.id, ...sizeFor(p.id, spec), ...(p.id === 'watermark' && spec.opacity === undefined ? { opacity: 0.15 } : {}) })}>
             <MiniPage placement={p.id} src={spec.src} opacity={p.id === 'watermark' ? (spec.opacity ?? 0.15) : 1} rotation={spec.rotation ?? 0} accent={accent} />
             <small>{p.label}</small>
           </button>

@@ -10,6 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const OUT = join(here, '..', '..', 'site', 'public', 'shots');
 mkdirSync(OUT, { recursive: true });
 const app = (process.argv[2] ?? 'http://localhost:3000').replace(/\/$/, '');
+const ONLY = process.env.ONLY ? new RegExp(process.env.ONLY) : null;
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
@@ -36,12 +37,14 @@ const atEnd = (page) =>
   });
 const insertPanel = async (page, label) => {
   await page.evaluate(() => window.wordcraft.canvas.focus());
-  await page.getByRole('button', { name: /Write with/ }).first().click();
+  const launcher = page.getByRole('button', { name: /Write with/ }).first();
+  if (await launcher.isVisible().catch(() => false)) await launcher.click();
   await page.getByRole('button', { name: /^Insert/ }).first().click();
   await page.getByRole('menuitem', { name: label, exact: true }).click();
 };
 
 async function shot(name, fn) {
+  if (ONLY && !ONLY.test(name)) return;
   const { page, ctx } = await open();
   try {
     await fn(page);
@@ -119,8 +122,11 @@ await shot('brand', async (page) => {
   await page.locator('.wcbr-swatch').first().waitFor({ timeout: 10000 });
   await save(page, 'brand-palette');
   await page.getByRole('tab', { name: 'Letterhead' }).click();
-  await page.locator('input[type=file][accept*="image/png"]').first().setInputFiles([toFile(pics[0], 'logo.png')]);
+  await page.locator('.wcai-studio input[type=file]:not([multiple])').first().setInputFiles([toFile(pics[0], 'logo.png')]);
   await page.getByRole('button', { name: 'Placement' }).click();
+  await page.getByRole('radio', { name: /Watermark/ }).click();
+  await page.locator('.wcbr-places').scrollIntoViewIfNeeded();
+  await page.locator('.wcai-studio-body').evaluate((el) => el.scrollBy(0, 120));
   await save(page, 'brand-placement');
 });
 
