@@ -189,7 +189,7 @@ export function AppShell({ index, version, children }: { index: DocEntry[]; vers
                 {PRIMARY.map(({ href, label, icon: Icon, match }) => (
                   <Link key={href} href={href} aria-current={match(path) && (href !== '/' || !path.startsWith('/docs/changelog')) ? 'page' : undefined}>
                     <span className="nav-ico">
-                      <Icon size={20} weight={match(path) ? 'fill' : 'regular'} />
+                      <Icon size={17} />
                     </span>
                     {label}
                   </Link>
