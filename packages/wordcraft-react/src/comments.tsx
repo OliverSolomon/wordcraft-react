@@ -11,9 +11,9 @@
  * can keep them and send notifications.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 
-import type { DocComment, WordcraftEditor, WordcraftUser } from './core.js';
+import type { CommentAnchor, DocComment, WordcraftEditor, WordcraftUser } from './core.js';
 
 /** Someone who can be mentioned or assigned. */
 export interface Person {
@@ -70,6 +70,49 @@ export interface CommentsOptions {
   onResolve?(comment: StoredComment, resolved: boolean): void;
   /** Someone was mentioned (or assigned): send them a notification. */
   onMention?(event: { comment: StoredComment; people: Person[]; assignee: Person | null }): void;
+  /**
+   * The host owns comments: WordCraft's own comments pane never opens (ribbon, selection toolbar,
+   * right-click menu, Ctrl+Alt+M, phone palette, balloons). Every way of adding a comment asks for
+   * a composer on the selection instead: `onRequestCompose` when given, otherwise this package's
+   * drawer. No comment exists until it is submitted with text. ✦ Extra.
+   */
+  exclusive?: boolean;
+  /** The same as `exclusive: true`. */
+  nativePane?: boolean;
+  /**
+   * Show your own composer for a new comment on `request.anchor` (the selection when it was asked
+   * for). Call `submit(text)` to make the comment (it returns the id) or `cancel()`: nothing is
+   * made until then. Without it the package's drawer opens with its composer.
+   */
+  onRequestCompose?(request: ComposeRequest): void;
+  /** A comment's balloon (or its highlight) was clicked: open it in your panel. */
+  onOpenComment?(id: number): void;
+}
+
+/** A request to write a new comment, from any of WordCraft's ways of adding one. */
+export interface ComposeRequest {
+  /** Where the comment will go: the selection when it was asked for. */
+  anchor: CommentAnchor;
+  /** The selected text. */
+  quote: string;
+  /** Make the comment. Returns its id. Throws for empty text. */
+  submit(text: string): number;
+  /** Nothing is made. */
+  cancel(): void;
+}
+
+/** Does `options` give comments to the host (WordCraft's pane never opens)? */
+export function hostOwnsComments(options: CommentsOptions | null | undefined): boolean {
+  return !!options && (options.exclusive === true || options.nativePane === false);
+}
+
+/** The selection as a comment anchor, or `null` when nothing in one body paragraph is selected. */
+export function selectionAnchor(editor: WordcraftEditor): CommentAnchor | null {
+  const c = editor.caret();
+  const a = c?.anchor;
+  const f = c?.focus;
+  if (!a || !f || a.path.join() !== f.path.join() || a.offset === f.offset) return null;
+  return { path: a.path, start: Math.min(a.offset, f.offset), end: Math.max(a.offset, f.offset) };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -240,10 +283,18 @@ export interface CommentsPanelProps {
   /** Assignments made here (comment id to person), kept by the editor component. */
   assignees: Map<number, Person | null>;
   onAssign: (id: number, person: Person | null) => void;
-  onClose: () => void;
+  onClose?: () => void;
   dark?: boolean;
   /** A bottom sheet (phones) instead of a side panel. */
   sheet?: boolean;
+  /** Fill the element it is placed in (your own sidebar) instead of floating over the editor's right edge. */
+  inline?: boolean;
+  /** Open the composer on this place (a New Comment from WordCraft's own buttons). */
+  compose?: { anchor: CommentAnchor; quote: string; nonce: number } | null;
+  /** The composer was submitted or cancelled. */
+  onComposeDone?: () => void;
+  /** Open this thread (a balloon was clicked). */
+  focusId?: number | null;
 }
 
 function initials(name: string) {
@@ -409,11 +460,41 @@ function MentionBox({
   );
 }
 
-export function CommentsPanel({ editor, comments, user, people, options, canComment, assignees, onAssign, onClose, dark, sheet }: CommentsPanelProps) {
+export function CommentsPanel({ editor, comments, user, people, options, canComment, assignees, onAssign, onClose, dark, sheet, inline, compose, onComposeDone, focusId }: CommentsPanelProps) {
   const [filter, setFilter] = useState<Filter>('open');
   const [author, setAuthor] = useState('');
   const [draft, setDraft] = useState('');
-  const [composing, setComposing] = useState(false);
+  // Where the new comment goes, caught when the composer opens (focusing the box can't move it).
+  const [target, setTarget] = useState<{ anchor: CommentAnchor; quote: string } | null>(null);
+  const composing = !!target;
+  useEffect(() => {
+    if (compose) {
+      setTarget({ anchor: compose.anchor, quote: compose.quote });
+      setDraft('');
+      setFilter('open');
+    }
+  }, [compose?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
+  const closeComposer = () => {
+    setTarget(null);
+    setDraft('');
+    onComposeDone?.();
+  };
+  const openComposer = () => {
+    if (composing) return closeComposer();
+    const anchor = selectionAnchor(editor);
+    if (!anchor) {
+      setAnnounce('Select the text to comment on first.');
+      setTarget({ anchor: { path: [], start: 0, end: 0 }, quote: '' });
+      return;
+    }
+    setTarget({ anchor, quote: editor.getSelectedText() });
+  };
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focusId == null) return;
+    setFilter((f) => (comments.find((c) => c.id === focusId)?.resolved ? 'resolved' : f === 'resolved' ? 'open' : f));
+    requestAnimationFrame(() => listRef.current?.querySelector(`[data-thread="${focusId}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+  }, [focusId]); // eslint-disable-line react-hooks/exhaustive-deps
   const [assign, setAssign] = useState(false);
   const [replies, setReplies] = useState<Record<number, string>>({});
   const [editing, setEditing] = useState<{ id: number; text: string } | null>(null);
@@ -445,9 +526,10 @@ export function CommentsPanel({ editor, comments, user, people, options, canComm
     seen.current = comments.length;
   }, [comments.length]);
 
-  const run = (command: string, params?: Record<string, unknown>) => {
+  // The host's comment API: commands turned off for WordCraft's own buttons don't stop the panel.
+  const run = (f: () => unknown) => {
     try {
-      editor.execute(command, params);
+      f();
       return true;
     } catch (e) {
       setAnnounce(e instanceof Error ? e.message : String(e));
@@ -457,29 +539,25 @@ export function CommentsPanel({ editor, comments, user, people, options, canComm
   const mentioned = mentionsIn(draft, people);
   const post = () => {
     const text = draft.trim();
-    if (!text) return;
-    if (!editor.getSelectedText().trim()) {
+    if (!text || !target) return;
+    let id = -1;
+    const anchor = target.anchor.path.length ? target.anchor : selectionAnchor(editor);
+    if (!anchor) {
       setAnnounce('Select the text to comment on first.');
       return;
     }
-    if (!run('review.newComment', { text })) return;
-    if (assign && mentioned[0]) {
-      const made = editor.comments().filter((c) => c.parent == null && c.text === text);
-      const last = made[made.length - 1];
-      if (last) onAssign(last.id, mentioned[0]);
-    }
-    setDraft('');
+    if (!run(() => (id = editor.comments.create({ text, anchor })))) return;
+    if (assign && mentioned[0] && id >= 0) onAssign(id, mentioned[0]);
     setAssign(false);
-    setComposing(false);
+    closeComposer();
   };
   const reply = (id: number) => {
     const text = replies[id]?.trim();
     if (!text) return;
-    if (run('review.reply', { id, text })) setReplies((r) => ({ ...r, [id]: '' }));
+    if (run(() => editor.comments.reply(id, text))) setReplies((r) => ({ ...r, [id]: '' }));
   };
-  const go = (c: DocComment) => {
-    if (c.anchor) editor.selectText(c.anchor.path, c.anchor.start, c.anchor.end);
-  };
+  const saveEdit = () => editing && editing.text.trim() && run(() => editor.comments.edit(editing.id, editing.text.trim())) && setEditing(null);
+  const go = (c: DocComment) => run(() => editor.comments.focus(c.id));
 
   const card = (c: DocComment, isReply: boolean, thread: DocComment) => {
     const own = c.author === me;
@@ -493,58 +571,59 @@ export function CommentsPanel({ editor, comments, user, people, options, canComm
             <span>{when(c.date)}</span>
           </div>
           {!isReply && canComment && (
-            <button type="button" className="wccm-icon" title={thread.resolved ? 'Reopen' : 'Resolve'} aria-label={thread.resolved ? 'Reopen' : 'Resolve'} onClick={() => run('review.resolveComment', { id: thread.id, value: !thread.resolved })}>
-              {thread.resolved ? '↺' : '✓'}
+            <button type="button" className="wccm-icon" title={thread.resolved ? 'Reopen' : 'Resolve'} aria-label={thread.resolved ? 'Reopen' : 'Resolve'} onClick={() => run(() => (thread.resolved ? editor.comments.reopen(thread.id) : editor.comments.resolve(thread.id)))}>
+              {thread.resolved ? <Icon d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" /> : <Icon d="M5 12.5 10 17l9-10" />}
             </button>
-          )}
-          {own && canComment && !editingThis && (
-            <details className="wccm-more">
-              <summary aria-label="More">⋯</summary>
-              <div>
-                <button type="button" onClick={() => setEditing({ id: c.id, text: c.text })}>
-                  Edit
-                </button>
-                <button type="button" onClick={() => run('review.deleteComment', { id: c.id })}>
-                  Delete
-                </button>
-              </div>
-            </details>
           )}
         </div>
         {editingThis ? (
           <div className="wccm-edit">
-            <MentionBox value={editing.text} onChange={(t) => setEditing({ id: c.id, text: t })} onSubmit={() => run('review.editComment', { id: c.id, text: editing.text.trim() }) && setEditing(null)} people={people} options={options} placeholder="Edit comment" autoFocus />
+            <MentionBox value={editing.text} onChange={(t) => setEditing({ id: c.id, text: t })} onSubmit={saveEdit} people={people} options={options} placeholder="Edit comment" autoFocus />
             <div className="wccm-actions">
               <button type="button" className="wccm-btn" onClick={() => setEditing(null)}>
                 Cancel
               </button>
-              <button type="button" className="wccm-btn wccm-primary" disabled={!editing.text.trim()} onClick={() => run('review.editComment', { id: c.id, text: editing.text.trim() }) && setEditing(null)}>
+              <button type="button" className="wccm-btn wccm-primary" disabled={!editing.text.trim()} onClick={saveEdit}>
                 Save
               </button>
             </div>
           </div>
         ) : (
-          <p className="wccm-text">
-            <Rich text={c.text} people={people} />
-          </p>
+          <>
+            <p className="wccm-text">
+              <Rich text={c.text} people={people} />
+            </p>
+            {own && canComment && (
+              <div className="wccm-tools">
+                <button type="button" className="wccm-icon wccm-sm" title="Edit" aria-label={`Edit comment by ${c.author}`} onClick={() => setEditing({ id: c.id, text: c.text })}>
+                  <Icon d="M4 20h4L19 9l-4-4L4 16v4Z" />
+                </button>
+                <button type="button" className="wccm-icon wccm-sm" title="Delete" aria-label={`Delete comment by ${c.author}`} onClick={() => run(() => editor.comments.delete(c.id))}>
+                  <Icon d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" />
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     );
   };
 
   return (
-    <aside className={`wccm${sheet ? ' wccm-sheet' : ''}`} data-theme={dark ? 'dark' : 'light'} aria-label="Comments" onKeyDown={(e) => e.stopPropagation()} onKeyUp={(e) => e.stopPropagation()}>
+    <aside className={`wccm${sheet ? ' wccm-sheet' : ''}${inline ? ' wccm-inline' : ''}`} data-theme={dark ? 'dark' : 'light'} aria-label="Comments" onKeyDown={(e) => e.stopPropagation()} onKeyUp={(e) => e.stopPropagation()}>
       <style>{CSS}</style>
       <div className="wccm-top">
         <h2>Comments</h2>
         {canComment && (
-          <button type="button" className="wccm-btn wccm-primary" onClick={() => setComposing((v) => !v)}>
+          <button type="button" className="wccm-btn wccm-primary" onClick={openComposer}>
             + Comment
           </button>
         )}
-        <button type="button" className="wccm-icon" aria-label="Close comments" onClick={onClose}>
-          ✕
-        </button>
+        {onClose && (
+          <button type="button" className="wccm-icon" aria-label="Close comments" onClick={onClose}>
+            ✕
+          </button>
+        )}
       </div>
       <div className="wccm-filters" role="tablist" aria-label="Show">
         {(
@@ -572,7 +651,7 @@ export function CommentsPanel({ editor, comments, user, people, options, canComm
       </div>
       {composing && canComment && (
         <div className="wccm-thread wccm-compose">
-          <p className="wccm-hint">{editor.getSelectedText().trim() ? `On “${editor.getSelectedText().trim().slice(0, 60)}”` : 'Select text in the document, then write your comment.'}</p>
+          <p className="wccm-hint">{target?.quote.trim() ? `On “${target.quote.trim().slice(0, 60)}”` : 'Select text in the document, then write your comment.'}</p>
           <MentionBox value={draft} onChange={setDraft} onSubmit={post} people={people} options={options} placeholder="Comment or add others with @" autoFocus />
           {mentioned.length > 0 && (
             <label className="wccm-assign">
@@ -580,7 +659,7 @@ export function CommentsPanel({ editor, comments, user, people, options, canComm
             </label>
           )}
           <div className="wccm-actions">
-            <button type="button" className="wccm-btn" onClick={() => setComposing(false)}>
+            <button type="button" className="wccm-btn" onClick={closeComposer}>
               Cancel
             </button>
             <button type="button" className="wccm-btn wccm-primary" disabled={!draft.trim()} onClick={post}>
@@ -589,12 +668,12 @@ export function CommentsPanel({ editor, comments, user, people, options, canComm
           </div>
         </div>
       )}
-      <div className="wccm-list">
+      <div className="wccm-list" ref={listRef}>
         {shown.length === 0 && <p className="wccm-empty">{filter === 'open' ? 'No open comments.' : 'Nothing here.'}</p>}
         {shown.map((t) => {
           const assignee = assignees.get(t.c.id);
           return (
-            <div key={t.c.id} className="wccm-thread" data-resolved={t.c.resolved || undefined}>
+            <div key={t.c.id} className="wccm-thread" data-thread={t.c.id} data-focused={focusId === t.c.id || undefined} data-resolved={t.c.resolved || undefined}>
               {t.c.quote && (
                 <button type="button" className="wccm-quote" onClick={() => go(t.c)} title="Show in the document">
                   {t.c.quote}
@@ -630,17 +709,76 @@ export function CommentsPanel({ editor, comments, user, people, options, canComm
   );
 }
 
+function Icon({ d }: { d: string }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+}
+
+export interface CommentsDrawerProps {
+  editor: WordcraftEditor | null;
+  user?: WordcraftUser;
+  /** Mentions, the store and the callbacks, as for the editor's `comments` prop. */
+  options?: CommentsOptions;
+  /** Can add, reply to and resolve comments. Default true. */
+  canComment?: boolean;
+  /** Open the composer on this place (`onRequestCompose` gives you one). */
+  compose?: CommentsPanelProps['compose'];
+  onComposeDone?: () => void;
+  focusId?: number | null;
+  onClose?: () => void;
+  dark?: boolean;
+  className?: string;
+  style?: CSSProperties;
+}
+
+/**
+ * The comments drawer on its own, for your own sidebar or page: threads with filters, replies,
+ * `@mentions`, Resolve, Edit and Delete, and the composer. It fills the element you put it in,
+ * at any width. Works with `comments={{ exclusive: true }}`. ✦ Extra.
+ */
+export function CommentsDrawer({ editor, user, options = {}, canComment = true, compose, onComposeDone, focusId, onClose, dark, className, style }: CommentsDrawerProps) {
+  const people: Person[] = Array.isArray(options.people) ? options.people : [];
+  const [assignees, setAssignees] = useState(() => new Map<number, Person | null>());
+  const comments = useCommentSync(editor, options, people, assignees);
+  if (!editor) return null;
+  return (
+    <div className={className} style={{ position: 'relative', height: '100%', minHeight: 240, ...style }}>
+      <CommentsPanel
+        editor={editor}
+        comments={comments}
+        user={user}
+        people={people}
+        options={options}
+        canComment={canComment}
+        assignees={assignees}
+        onAssign={(id, p) => setAssignees((m) => new Map(m).set(id, p))}
+        onClose={onClose}
+        dark={dark}
+        inline
+        compose={compose}
+        onComposeDone={onComposeDone}
+        focusId={focusId}
+      />
+    </div>
+  );
+}
+
 /** The number of open comment threads, for a toolbar button. */
 export function openThreads(comments: DocComment[]): number {
   return comments.filter((c) => c.parent == null && !c.resolved).length;
 }
 
-export function CommentsButton({ count, onClick, children }: { count: number; onClick: () => void; children?: ReactNode }) {
+export function CommentsButton({ count, onClick, children, icon }: { count: number; onClick: () => void; children?: ReactNode; icon?: ReactNode }) {
   return (
     <button type="button" className="wccm-launch" onClick={onClick} aria-label={`Comments, ${count} open`}>
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M4 5h16v11H11l-5 4v-4H4Z" />
-      </svg>
+      {icon ?? (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M4 5h16v11H11l-5 4v-4H4Z" />
+        </svg>
+      )}
       {count > 0 && <span>{count}</span>}
       {children}
     </button>
@@ -651,6 +789,7 @@ const CSS = `
 .wccm{--bg:var(--wc-bg,#fff);--fg:var(--wc-fg,#1f1f1f);--dim:var(--wc-dim,#5f6368);--line:var(--wc-line,#e0e3e7);--soft:var(--wc-soft,#f1f4f9);--accent:var(--wc-accent,#0b57d0);--accent-soft:var(--wc-accent-soft,#e8f0fe);--accent-fg:var(--wc-accent-fg,#fff);--shadow:0 2px 6px rgba(60,64,67,.15),0 8px 24px rgba(60,64,67,.12);
 position:absolute;top:0;right:0;bottom:0;width:min(340px,100%);z-index:6;display:flex;flex-direction:column;background:var(--bg);color:var(--fg);border-left:1px solid var(--line);box-shadow:var(--shadow);font:14px/1.45 "Google Sans Text","Google Sans",Inter,"Segoe UI",system-ui,sans-serif;animation:wccm-in .2s cubic-bezier(.2,.8,.2,1)}
 .wccm[data-theme=dark]{--bg:var(--wc-bg,#1e1f20);--fg:var(--wc-fg,#e3e3e3);--dim:var(--wc-dim,#a8abb0);--line:var(--wc-line,#3c4043);--soft:var(--wc-soft,#282a2c);--accent:var(--wc-accent,#a8c7fa);--accent-soft:var(--wc-accent-soft,#0b3a7a);--accent-fg:var(--wc-accent-fg,#062e6f);--shadow:0 2px 6px rgba(0,0,0,.5),0 8px 24px rgba(0,0,0,.45)}
+.wccm-inline{position:absolute;inset:0;width:auto;border-left:0;box-shadow:none;animation:none;container-type:inline-size}
 .wccm-sheet{top:auto;left:0;width:auto;height:min(72%,560px);border-left:0;border-top:1px solid var(--line);border-radius:16px 16px 0 0;animation:wccm-up .22s cubic-bezier(.2,.8,.2,1)}
 .wccm *{box-sizing:border-box}
 .wccm button,.wccm select,.wccm textarea{font:inherit;color:inherit}
@@ -677,15 +816,15 @@ position:absolute;top:0;right:0;bottom:0;width:min(340px,100%);z-index:6;display
 .wccm-meta{display:grid;margin-right:auto;min-width:0}
 .wccm-meta strong{font-size:13px;font-weight:600}
 .wccm-meta span{font-size:11px;color:var(--dim)}
-.wccm-text{margin:6px 0 0;white-space:pre-wrap;word-break:break-word}
+.wccm-text{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.wccm-tools{display:flex;gap:2px;margin:4px 0 0 -6px}
+.wccm .wccm-sm{width:28px;height:28px}
+.wccm-thread[data-focused]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.wccm-top,.wccm-filters,.wccm-who{min-width:0}
+.wccm-meta strong,.wccm-meta span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@container (max-width:260px){.wccm-top{padding:10px 6px 6px 10px}.wccm-top h2{font-size:15px}.wccm-filters{padding:4px 8px 8px}.wccm-list{padding:8px 6px 12px}.wccm-thread{padding:8px}.wccm-filters select{flex:1 1 100%}}
 .wccm-reply{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
 .wccm-mention{color:var(--accent);font-weight:500}
-.wccm-more{position:relative}
-.wccm-more summary{list-style:none;width:32px;height:32px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:var(--dim)}
-.wccm-more summary::-webkit-details-marker{display:none}
-.wccm-more div{position:absolute;right:0;top:34px;z-index:2;min-width:120px;padding:4px 0;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}
-.wccm-more div button{display:block;width:100%;padding:8px 14px;border:0;background:none;text-align:left;cursor:pointer}
-.wccm-more div button:hover{background:var(--soft)}
 .wccm-box{position:relative}
 .wccm-box textarea{width:100%;min-height:38px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);resize:vertical;outline:none}
 .wccm-box textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}

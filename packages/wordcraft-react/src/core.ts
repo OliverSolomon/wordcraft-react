@@ -48,7 +48,43 @@ export interface WordcraftPrefs {
   showDiscord: boolean;
   /** Open on the File (backstage) view. */
   backstage: boolean;
+  /** The host owns comments: New Comment asks the host (`compose`), and the comments pane never opens. */
+  hostComments: boolean;
+  /** Share asks the host (`share`) instead of WordCraft's own dialog. */
+  hostShare: boolean;
+  /** No right-click menu on the page. */
+  hideContextMenu: boolean;
+  /** No rulers. */
+  hideRulers: boolean;
+  /** No Navigation pane (it never opens). */
+  hideNavPane: boolean;
+  /** No collaborator avatars in the title bar. */
+  hidePresence: boolean;
+  /** No Share button in the title bar. */
+  hideShare: boolean;
+  /** No Editing / Reviewing / Viewing switch in the ribbon. */
+  hideModeSwitch: boolean;
+  /** No Comments button in the ribbon's corner. */
+  hideCommentsButton: boolean;
+  /** No zoom slider in the status bar. */
+  hideZoom: boolean;
+  /** No page-view buttons (Read, Print Layout, Web Layout) in the status bar. */
+  hideViewSwitcher: boolean;
+  /** The File menu, arranged by the host (see `fileMenu` on the React component). */
+  fileMenu: FileMenuPref[];
   [key: string]: unknown;
+}
+
+/** One File menu item as WordCraft reads it. */
+export interface FileMenuPref {
+  id: string;
+  label?: string;
+  hidden?: boolean;
+  /** Why it is off (shown on hover); empty when it is on. */
+  disabled?: string;
+  /** Clicking it asks the host (`file:<id>`) instead of WordCraft's own page. */
+  host?: boolean;
+  section?: string;
 }
 
 export interface ChangeInfo {
@@ -165,9 +201,10 @@ export function hiddenTabsFor(show: RibbonTab[] | undefined, hide: RibbonTab[] |
 }
 
 /** The UI preferences that show or hide the title bar and ribbon. */
-export function chromePrefs(titleBar: boolean | undefined, ribbon: RibbonDisplay | undefined): Partial<WordcraftPrefs> {
+export function chromePrefs(titleBar: boolean | undefined, ribbonIn: RibbonDisplay | boolean | undefined): Partial<WordcraftPrefs> {
   const out: Partial<WordcraftPrefs> = {};
   if (titleBar !== undefined) out.hideTitleBar = !titleBar;
+  const ribbon = ribbonIn === true ? 'full' : ribbonIn === false ? 'hidden' : ribbonIn;
   if (ribbon !== undefined) {
     out.hideRibbon = ribbon === 'hidden';
     out.ribbonCollapsed = ribbon === 'tabs';
@@ -261,6 +298,51 @@ export interface TextMark {
   /** `#rrggbb`. */
   color?: string;
   style?: 'squiggle' | 'highlight';
+}
+
+/** A comment's place: a paragraph path and UTF-16 offsets in its text (as `paragraphs()` counts). */
+export interface CommentAnchor {
+  path: number[];
+  start: number;
+  end: number;
+}
+
+/** The host's comment API, also callable for the list (`editor.comments()`). */
+export interface CommentsApi {
+  (): DocComment[];
+  list(): DocComment[];
+  /** A comment on `anchor` (default: the selection). Returns its id. Text is required: there are no empty comments. */
+  create(input: { text: string; anchor?: CommentAnchor | null }): number;
+  reply(id: number, text: string): number | null;
+  edit(id: number, text: string): void;
+  delete(id: number): void;
+  resolve(id: number): void;
+  reopen(id: number): void;
+  /** Select the commented text and scroll to it. */
+  focus(id: number): void;
+  /** Every change (made here, by a co-editor or by WordCraft's UI). Returns a function that stops listening. */
+  onChange(cb: (comments: DocComment[]) => void): () => void;
+}
+
+/** The formatting at the selection, for a host toolbar. */
+export interface EditorState {
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  strike: boolean;
+  font: string;
+  size: number;
+  /** The paragraph style's name, e.g. `Normal`, `Heading 1`. */
+  style: string;
+  align: 'left' | 'center' | 'right' | 'justify' | string;
+  bullets: boolean;
+  numbering: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
+  /** A caret, not a selection. */
+  collapsed: boolean;
+  selectedText: string;
+  mode: EditorMode;
 }
 
 /** A command from WordCraft's registry (the same ids the ribbon, shortcuts and MCP use). */
@@ -408,8 +490,26 @@ export interface WordcraftEditor {
   onSelection(cb: (info: SelectionInfo) => void): () => void;
   /** Every body paragraph, tables included, with its path and plain text. */
   paragraphs(): DocParagraph[];
-  /** Every comment and reply, with its author, state, text and anchor. */
-  comments(): DocComment[];
+  /**
+   * Every comment and reply (call it), and the host's comment API (`editor.comments.create`…).
+   * The API is the host's own: `disabledCommands` never blocks it, so a host that turns off
+   * WordCraft's comment buttons still writes comments through its panel.
+   */
+  readonly comments: CommentsApi;
+  /**
+   * Events from WordCraft's own UI meant for the page: `compose` (New Comment with the host
+   * owning comments), `comments`, `comment:<id>` (a balloon was clicked), `share`, `file:<id>` (a
+   * File menu item the host owns), `ai`, `versions`. Returns a function that stops listening.
+   */
+  onHostEvent(cb: (event: string) => void): () => void;
+  /** The formatting and state at the selection, for a toolbar of your own. */
+  state(): EditorState;
+  /** Listen for the selection or its formatting changing (a toolbar of your own). Returns a function that stops listening. */
+  onStateChange(cb: (state: EditorState) => void): () => void;
+  /** Whether a toolbar toggle is on at the selection: `bold`, `italic`, `underline`, `strike`, `bullets`, `numbering`, `alignLeft`, `alignCenter`, `alignRight`, `justify`, `heading1`… */
+  isActive(name: string): boolean;
+  /** Whether a command can run now (not turned off, not refused by Viewing or Restrict Editing). */
+  can(command: string): boolean;
   /** Select `start..end` (UTF-16 offsets) of the paragraph at `path`, and scroll to it. */
   selectText(path: number[], start: number, end: number): void;
   /** Lay marks over the text (squiggles or highlights); an empty list clears them. */
@@ -493,6 +593,9 @@ interface RawHandle {
   selectText?(path: string, start: number, end: number): void;
   setMarks?(json: string): void;
   caret?(): string;
+  executeHost?(id: string, params?: string | null): string;
+  paraState?(): string;
+  whyNot?(id: string): string;
   selectedObject?(): string;
   followPeer?(name: string | null): void;
   collabStart(clientId: number, state: Uint8Array | null): boolean;
@@ -765,9 +868,17 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
   // Events from WordCraft's UI meant for the page.
   let onAi: (() => void) | null = options.onAiButton ?? null;
   let onVersions: (() => void) | null = options.onVersionHistory ?? null;
+  const hostListeners = new Set<(event: string) => void>();
   raw.setOnHostEvent?.((event) => {
     if (event === 'ai') onAi?.();
     if (event === 'versions') onVersions?.();
+    for (const l of [...hostListeners]) {
+      try {
+        l(event);
+      } catch (e) {
+        console.error('[wordcraft] host event listener threw', e);
+      }
+    }
   });
   if (options.aiButton) raw.setAiButton?.(true);
   if (options.versionHistory) raw.setVersionHistory?.(true);
@@ -816,6 +927,137 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
     raw.setOnSelection?.(selectionListeners.size ? (info) => selectionListeners.forEach((cb) => cb(toCss(info))) : null);
   };
 
+  // The host's comment API and toolbar state. These are the host's own calls: commands it turned
+  // off for people (disabledCommands) don't apply, so its panel and toolbar always work.
+  const host = <T,>(id: string, params: Record<string, unknown> = {}): T => {
+    alive();
+    if (raw.executeHost) return JSON.parse(raw.executeHost(id, JSON.stringify(params))) as T;
+    return JSON.parse(raw.execute(id, JSON.stringify(params))) as T;
+  };
+  const listComments = (): DocComment[] => {
+    alive();
+    return raw.comments ? (JSON.parse(raw.comments()) as DocComment[]) : [];
+  };
+  const needText = (text: string) => {
+    if (typeof text !== 'string' || !text.trim()) throw new Error('A comment needs text: WordCraft never makes an empty comment.');
+    return text;
+  };
+  const commentsApi = Object.assign(() => listComments(), {
+    list: listComments,
+    create({ text, anchor }: { text: string; anchor?: CommentAnchor | null }) {
+      needText(text);
+      if (anchor) raw.selectText?.(JSON.stringify(anchor.path), Math.max(0, anchor.start), Math.max(0, anchor.end));
+      const out = host<{ id?: number }>('review.newComment', { text });
+      if (typeof out?.id !== 'number') throw new Error('The comment was not made (is there text selected, and may this person comment?).');
+      return out.id;
+    },
+    reply(id: number, text: string) {
+      needText(text);
+      return host<{ id?: number }>('review.reply', { id, text })?.id ?? null;
+    },
+    edit(id: number, text: string) {
+      host('review.editComment', { id, text: needText(text) });
+    },
+    delete(id: number) {
+      host('review.deleteComment', { id });
+    },
+    resolve(id: number) {
+      host('review.resolveComment', { id, value: true });
+    },
+    reopen(id: number) {
+      host('review.resolveComment', { id, value: false });
+    },
+    focus(id: number) {
+      const c = listComments().find((x) => x.id === id);
+      const root = c && c.parent != null ? listComments().find((x) => x.id === c.parent) ?? c : c;
+      const a = root?.anchor;
+      if (a) raw.selectText?.(JSON.stringify(a.path), a.start, a.end);
+    },
+    onChange(cb: (comments: DocComment[]) => void) {
+      alive();
+      commentListeners.add(cb);
+      startWatch();
+      return () => {
+        commentListeners.delete(cb);
+      };
+    },
+  }) as CommentsApi;
+
+  const readState = (): EditorState => {
+    alive();
+    const f = host<Record<string, unknown>>('format.state') ?? {};
+    const p = raw.paraState ? (JSON.parse(raw.paraState()) as { align: string; bullets: boolean; numbering: boolean; collapsed: boolean }) : { align: 'left', bullets: false, numbering: false, collapsed: true };
+    return {
+      bold: !!f.bold,
+      italic: !!f.italic,
+      underline: !!f.underline,
+      strike: !!f.strike,
+      font: typeof f.font === 'string' ? f.font : '',
+      size: typeof f.size === 'number' ? f.size : 0,
+      style: typeof f.styleName === 'string' ? f.styleName : 'Normal',
+      align: p.align,
+      bullets: p.bullets,
+      numbering: p.numbering,
+      canUndo: raw.canUndo(),
+      canRedo: raw.canRedo(),
+      collapsed: p.collapsed,
+      selectedText: raw.getSelectedText(),
+      mode: raw.getMode() as EditorMode,
+    };
+  };
+
+  // One light watcher for both: read only when something could have changed (an edit, or the
+  // caret moved), and tell listeners only when the answer differs.
+  const commentListeners = new Set<(c: DocComment[]) => void>();
+  const stateListeners = new Set<(s: EditorState) => void>();
+  let watch = 0;
+  let lastComments = '';
+  let lastState = '';
+  let lastRev = -1;
+  let lastCaret = '';
+  const tick = () => {
+    if (destroyed) return stopWatch();
+    if (!commentListeners.size && !stateListeners.size) return stopWatch();
+    try {
+      const rev = raw.rev();
+      const caret = raw.caret ? raw.caret() : '';
+      const moved = rev !== lastRev || caret !== lastCaret;
+      if (!moved) return;
+      const revChanged = rev !== lastRev;
+      lastRev = rev;
+      lastCaret = caret;
+      if (commentListeners.size && revChanged) {
+        const now = raw.comments ? raw.comments() : '[]';
+        if (now !== lastComments) {
+          lastComments = now;
+          const list = JSON.parse(now) as DocComment[];
+          for (const l of [...commentListeners]) l(list);
+        }
+      }
+      if (stateListeners.size) {
+        const s = readState();
+        const key = JSON.stringify(s);
+        if (key !== lastState) {
+          lastState = key;
+          for (const l of [...stateListeners]) l(s);
+        }
+      }
+    } catch (e) {
+      console.error('[wordcraft] a comments or state listener threw', e);
+    }
+  };
+  const startWatch = () => {
+    if (!watch) {
+      lastComments = raw.comments ? raw.comments() : '[]';
+      lastRev = -1;
+      watch = window.setInterval(tick, 150);
+    }
+  };
+  const stopWatch = () => {
+    if (watch) window.clearInterval(watch);
+    watch = 0;
+  };
+
   const editor: WordcraftEditor = {
     canvas,
     collab,
@@ -827,9 +1069,37 @@ export async function createWordcraft(container: HTMLElement, options: Wordcraft
       alive();
       return raw.paragraphs ? (JSON.parse(raw.paragraphs()) as DocParagraph[]) : [];
     },
-    comments() {
+    comments: commentsApi,
+    onHostEvent(cb) {
       alive();
-      return raw.comments ? (JSON.parse(raw.comments()) as DocComment[]) : [];
+      hostListeners.add(cb);
+      return () => {
+        hostListeners.delete(cb);
+      };
+    },
+    state: readState,
+    onStateChange(cb) {
+      alive();
+      stateListeners.add(cb);
+      startWatch();
+      return () => {
+        stateListeners.delete(cb);
+      };
+    },
+    isActive(name) {
+      const s = readState();
+      const v = (s as unknown as Record<string, unknown>)[name];
+      if (typeof v === 'boolean') return v;
+      if (/^align(Left|Center|Right)$/.test(name)) return s.align === name.slice(5).toLowerCase();
+      if (name === 'justify') return s.align === 'justify';
+      const h = /^heading([1-9])$/.exec(name);
+      if (h) return s.style.toLowerCase() === `heading ${h[1]}`;
+      if (name === 'title') return s.style.toLowerCase() === 'title';
+      return false;
+    },
+    can(command) {
+      alive();
+      return raw.whyNot ? raw.whyNot(command) === '' : true;
     },
     selectText(path, start, end) {
       alive();
