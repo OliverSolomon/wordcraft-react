@@ -4,6 +4,21 @@ Every published version of `@gamine/wordcraft-react`, newest first. Versions fol
 
 Features marked ✦ are Extras: additions of this package that are not part of Microsoft Word or WordCraft. [docs/DIVERGENCES.md](docs/DIVERGENCES.md) lists every way the package differs from WordCraft.
 
+## 0.3.6 (2026-10-17)
+
+- **Upstream WordCraft** moved to `eae2421` (308 commits). Highlights: a pure header and footer design with a page parameter, pictures leave the caret after them, and `krilla` comes from craft-libs. The patches were rebased; Cargo.toml now copies upstream's `[patch.crates-io]` on every sync. Upstream now opens on Home whenever preferences are applied, so `setPrefs` keeps the tab (and the File view) showing unless the change names one.
+- **Comments owned by your app** ✦ (`comments: { exclusive: true }`, or `nativePane: false`):
+  - **The native pane never opens**, from the selection toolbar, ribbon, right-click menu, Ctrl+Alt+M, phone palette or a balloon.
+  - **Compose before create:** every New Comment asks for a composer on the selection, yours (`onRequestCompose`) or the package's drawer. Nothing exists until it is submitted with text; cancelling leaves nothing.
+  - **A host API** outside the command ids: `editor.comments.create`, `reply`, `edit`, `delete`, `resolve`, `reopen`, `list`, `focus` and `onChange`, never blocked by `disabledCommands`.
+  - **The drawer:** Edit and Delete are icons under the text, it fits any width, and `<CommentsDrawer/>` is exported on its own.
+- **One `ui` prop** ✦ with a boolean for every surface: title bar, ribbon (with its tab row), status bar, selection toolbar, context menu, rulers, Navigation pane, the workspace row (Ask, Comments, Checks, Tools, Voice each), presence, Share, mode switch, zoom, page-view buttons, File menu and the phone palette. `false` removes the surface, its room and its shortcuts, live, with no remount. `ui="paper"` leaves the page alone. `ribbon` also takes `false`.
+- **A headless API** ✦ for your own toolbar: `editor.state()`, `onStateChange`, `isActive` and `can`, plus `editor.onHostEvent`.
+- **`icons`** ✦: your own icons for Ask, Comments, Checks, Tools, Voice, Share, Back and History.
+- **Your own top bar** ✦ (`topBar`): left, centre and right zones of built-in items (back with an unsaved check, quick access, title, save state, presence in cursor colours with follow and "+N" and "Guest", Share with a disabled reason, the user menu, comments, history) and your own buttons and components. At narrow widths the title shortens first, then avatars collapse, then Share becomes an icon; nothing overflows at 360px. It can be a function of `{ permission, user, collaborators }`.
+- **The File menu, item by item** ✦ (`fileMenu`): show, hide, rename, disable with a reason, replace with your action, reorder, group into sections and add your own items. Share is a File item, and each export format has its own id (`export.pdf`, `export.docx`...). Hidden or disabled items' shortcuts are off. `onShare` takes Share from WordCraft's dialog.
+- **Tests:** `smoke-host.mjs` runs ten New Comments in a row with no native pane, the drawer's and the host's composers, the switches toggled live, the File menu, the top bar at 1360px and 360px, two live collaborators, and a snapshot of the default chrome. The late letterhead check stays in `smoke-features.mjs`.
+
 ## 0.3.5 (2026-10-13)
 
 0.3.5 brings together what was planned as 0.3.5, 0.3.6 and 0.3.7.

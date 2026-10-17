@@ -324,6 +324,10 @@ export interface MobileShellProps {
   people?: number;
   /** More entries for the More menu (the Extras' panels: Ask this document, Writing checks…). */
   extraItems?: Array<{ label: string; onPress: () => void }>;
+  /** `false`: no command palette at the bottom (the page takes the room). */
+  palette?: boolean;
+  /** The host owns comments: Comment asks for its composer instead of the palette's. */
+  hostComments?: boolean;
 }
 
 type Sheet = 'peek' | 'open' | 'closed';
@@ -331,7 +335,7 @@ type Sheet = 'peek' | 'open' | 'closed';
 const TITLE_H = 48;
 const PEEK_H = 48;
 
-export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommands, onVersions, onAi, onInsets, permission = 'edit', onComments, openComments = 0, people = 0, extraItems = [] }: MobileShellProps) {
+export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommands, onVersions, onAi, onInsets, permission = 'edit', onComments, openComments = 0, people = 0, extraItems = [], palette = true, hostComments = false }: MobileShellProps) {
   const [sheet, setSheet] = useState<Sheet>('peek');
   const [tab, setTab] = useState<MobileTabId>('Home');
   const [pages, setPages] = useState<PageId[]>([]);
@@ -468,7 +472,7 @@ export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommand
   }, []);
 
   // Room the chrome takes, for the page between it.
-  const sheetH = viewing ? 0 : sheet === 'open' ? 0 : sheet === 'peek' ? PEEK_H : 0;
+  const sheetH = viewing || !palette ? 0 : sheet === 'open' ? 0 : sheet === 'peek' ? PEEK_H : 0;
   const top = hidden ? 0 : TITLE_H;
   const bottom = (hidden && sheet !== 'open' ? 0 : sheetH) + keyboard;
   useEffect(() => onInsets(top, bottom), [top, bottom, onInsets]);
@@ -495,7 +499,8 @@ export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommand
   }, [hiddenTabs, ctxKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const current = tabs.find((t) => t.id === tab) ?? tabs[0];
 
-  const openPage = (p: PageId) => setPages((s) => [...s, p]);
+  // With the host owning comments, New Comment asks for the host's composer (nothing is made yet).
+  const openPage = (p: PageId) => (p === 'comment' && hostComments ? (setSheet('peek'), setPages([]), void run('review.newComment')) : setPages((s) => [...s, p]));
   const backPage = () => setPages((s) => s.slice(0, -1));
 
   const drawing = useRef(false);
@@ -659,7 +664,7 @@ export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommand
               </>
             )}
             <IconButton icon="mobile" label="Mobile View" active={isWeb(state)} onPress={() => doAction(isWeb(state) ? 'printLayout' : 'mobileView')} />
-            {!viewing && <IconButton icon="palette" label="Show commands" active={sheet === 'open'} onPress={() => setSheet(sheet === 'open' ? 'peek' : 'open')} />}
+            {!viewing && palette && <IconButton icon="palette" label="Show commands" active={sheet === 'open'} onPress={() => setSheet(sheet === 'open' ? 'peek' : 'open')} />}
             <IconButton icon="more" label="More options" onPress={() => setMenu((m) => !m)} />
           </>
         )}
@@ -695,8 +700,8 @@ export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommand
           <FloatieButton icon="cut" label="Cut" onPress={() => void copy(true)} />
           <FloatieButton icon="copy" label="Copy" onPress={() => void copy(false)} />
           <FloatieButton icon="paste" label="Paste" onPress={() => void paste()} />
-          <FloatieButton icon="comment" label="Comment" onPress={() => (setSheet('open'), setTab('Review'), setPages(['comment']))} />
-          <FloatieButton icon="palette" label="Format" onPress={() => (setSheet('open'), setTab('Home'), setPages([]))} />
+          {(hostComments || palette) && <FloatieButton icon="comment" label="Comment" onPress={() => (hostComments ? run('review.newComment') : (setSheet('open'), setTab('Review'), setPages(['comment'])))} />}
+          {palette && <FloatieButton icon="palette" label="Format" onPress={() => (setSheet('open'), setTab('Home'), setPages([]))} />}
         </div>
       )}
 
@@ -717,7 +722,7 @@ export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommand
       )}
 
       {/* The command palette. */}
-      {!viewing && sheet !== 'closed' && (
+      {!viewing && palette && sheet !== 'closed' && (
         <section className="wcm-sheet" data-open={sheet === 'open' || undefined} data-hidden={(hidden && sheet !== 'open') || undefined} style={{ bottom: keyboard }} aria-label="Commands">
           {sheet === 'peek' ? (
             <div className="wcm-peek" role="toolbar" aria-label="Quick formatting">
@@ -726,7 +731,7 @@ export function MobileShell({ editor, options, dark, hiddenTabs, disabledCommand
               <ToolButton icon="underline" label="Underline" active={!!state.format.underline} onPress={() => run('format.underline')} />
               <ToolButton icon="bullets" label="Bullets" onPress={() => run('para.bullets')} />
               <ToolButton icon="numbering" label="Numbering" onPress={() => run('para.numbering')} />
-              <ToolButton icon="comment" label="New Comment" onPress={() => (setSheet('open'), setTab('Review'), setPages(['comment']))} />
+              <ToolButton icon="comment" label="New Comment" onPress={() => (hostComments ? run('review.newComment') : (setSheet('open'), setTab('Review'), setPages(['comment'])))} />
               <span className="wcm-peek-gap" />
               <ToolButton icon="up" label="Show commands" onPress={() => setSheet('open')} />
             </div>

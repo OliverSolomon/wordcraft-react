@@ -90,6 +90,14 @@ def main() -> int:
         embed = re.sub(r'^(wasm-bindgen\s*=\s*"=)[^"]+(")', r'\g<1>' + wbg + r'\g<2>', embed, count=1, flags=re.M)
     EMBED.write_text(embed)
 
+    # 2b. upstream's [patch.crates-io] (krilla from craft-libs, say) applies to our workspace too
+    root_toml = (ROOT / "Cargo.toml").read_text()
+    root_toml = re.sub(r"^# Upstream WordCraft's \[patch\.crates-io\].*\n\[patch\.crates-io\]\n(?:(?!^\[).*\n?)*", "", root_toml, flags=re.M).rstrip() + "\n"
+    m = re.search(r"^\[patch\.crates-io\]\n(?:(?!^\[).*\n?)*", up_toml, re.M)
+    if m:
+        root_toml += "\n# Upstream WordCraft's [patch.crates-io], copied by scripts/sync-upstream.py.\n" + m.group(0).rstrip() + "\n"
+    (ROOT / "Cargo.toml").write_text(root_toml)
+
     # 2. upstream's lockfile as the base; cargo fills in our own crates without touching the rest
     (ROOT / "Cargo.lock").write_text(up_lock)
     run("cargo", "metadata", "--format-version", "1", cwd=ROOT, capture=True)

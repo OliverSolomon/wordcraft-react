@@ -47,8 +47,8 @@ A complete example app lives in [`examples/nextjs`](examples/nextjs). The docume
 | `sample` | `boolean` | Starts with WordCraft's built-in sample document. |
 | `user` | `{ name, color?, id? }` | The person editing. The name shows on the title bar avatar and signs comments and tracked changes; `color` is their cursor colour when co-editing. Changes apply live; read it back with `editor.getUser()`. |
 | `autoSave` | `boolean` | AutoSave starts on (default) or off. It writes through `onSave` with `reason: 'autosave'` a couple of seconds after edits, and the title bar toggle switches it, as in Word. Needs `onSave`. |
-| `titleBar` | `boolean` | `false` hides the title bar (AutoSave, Quick Access Toolbar, title, search, avatar). |
-| `ribbon` | `'full' \| 'tabs' \| 'hidden'` | Word's Ribbon Display Options: always show, show tabs only, or hide the ribbon completely. People can also collapse the ribbon with the ^ at its corner (leaving the title bar, tabs and ruler), open a tab's commands over the page by clicking it, and pin the ribbon back. |
+| `titleBar` | `boolean` | `false` hides the title bar and everything in it (AutoSave, Quick Access Toolbar, title, search, avatars, Share, account). |
+| `ribbon` | `'full' \| 'tabs' \| 'hidden' \| boolean` | Word's Ribbon Display Options: always show, show tabs only, or hide the ribbon completely (`false` too, tab row included). People can also collapse the ribbon with the ^ at its corner (leaving the title bar, tabs and ruler), open a tab's commands over the page by clicking it, and pin the ribbon back. |
 | `tabs`, `hiddenTabs` | `RibbonTab[]` | Which ribbon tabs to offer: `File`, `Home`, `Insert`, `Draw`, `Design`, `Layout`, `References`, `Mailings`, `Review`, `View`, `Zotero`, `Help`. Contextual tabs (Table Design, Picture Format…) still appear when needed. Applied live. |
 | `mode` | `'editing' \| 'reviewing' \| 'viewing'` | Word's mode switch. Reviewing turns on Track Changes; Viewing allows reading, copying, printing and exporting but no changes. People can also switch it from the button beside Comments. |
 | `disabledCommands` | `string[]` | Commands to turn off, by id from `editor.commands()` or by prefix (`'mailings.*'`, `'file.open'`). They're greyed in the ribbon and refused from shortcuts, menus and `execute`. |
@@ -77,6 +77,11 @@ A complete example app lives in [`examples/nextjs`](examples/nextjs). The docume
 | `onError(error)` | | |
 | `guardUnload` | `boolean` | Asks before the tab closes with unsaved changes, as the WordCraft web app does. Off by default, because your app owns navigation. |
 | `wasmUrl` | `string \| URL` | Overrides where the binary loads from. |
+| `ui` ✦ Extra | `UiOptions \| 'paper'` | A boolean for every surface, applied live. See [Your own screen](#your-own-screen-extra). |
+| `topBar` ✦ Extra | `true`, `{ left, center, right }` or a function | Your own top bar in place of the title bar. See [Your own screen](#your-own-screen-extra). |
+| `fileMenu` ✦ Extra | `FileMenuItem[]`, per-item settings or a function | The File menu item by item, each export format too. See [Your own screen](#your-own-screen-extra). |
+| `icons` ✦ Extra | `{ ask?, comments?, checks?, tools?, voice?, share?, back?, history? }` | Your own icons (any React node) for the workspace row and the top bar. |
+| `onShare` | `() => void` | Share (title bar, File menu, top bar) asks you instead of opening WordCraft's dialog. |
 
 ## Editor API (the ref)
 
@@ -110,6 +115,11 @@ editor.setMarks([{ id, path, start, end, color, style: 'squiggle' }]);  // under
 editor.followPeer('Ada Lovelace'); // keep a co-editor's caret in view (null stops)
 editor.caret();                   // { anchor: { path, offset }, focus: { path, offset } } as paragraphs() counts
 editor.selectedObject();          // the selected picture, chart or shape: { kind, alt, title }, or null
+editor.comments.create({ text, anchor? });   // the host's comment API (see Comments)
+editor.onHostEvent((e) => {});    // 'compose', 'comments', 'comment:<id>', 'share', 'file:<id>', 'ai', 'versions'
+editor.state();                   // { bold, italic, underline, strike, font, size, style, align, bullets, numbering, canUndo, canRedo, collapsed, selectedText, mode }
+editor.onStateChange((s) => {});  // for a toolbar of your own; returns a function that stops listening
+editor.isActive('bold'); editor.can('file.print');
 editor.destroy();
 ```
 
@@ -187,9 +197,97 @@ WordCraft keeps comments in the document, Word style: a highlighted range with a
 - **The panel.** A comments button at the bottom right opens every thread, with filters for Open, Resolved, Mine and Mentions me, and by author. Click a quote to go to its text. Add a comment on the selection, reply, `@mention` with a people picker, *Assign to* the first person mentioned, Resolve and Reopen, and edit or delete your own. New comments are announced to screen readers, and on a phone the panel is a sheet over the page.
 - **The store.** Every method is optional and may return a promise; a failing store never stops anyone commenting. `subscribe(listener)` applies comments made elsewhere (an email reply, another app) to the open document. With co-editing, other people's comments arrive by themselves.
 - **Shortcuts and menus.** WordCraft's own New Comment (Review tab, right-click menu, mini toolbar, Ctrl+Alt+M) and margin cards work as before, and the store hears those comments too.
+- **Edit and Delete** sit as icons under your own comments' text. The panel fits any width.
 - **Suggestions.** The `suggest` level (or Word's Reviewing mode) records edits as tracked changes with their author; accept and reject them from the Review tab.
 
 `editor.comments()` lists the comments with their anchors, and `editor.selectText(path, start, end)` goes to one. `commentsOpen` and `onCommentsOpenChange` control the panel.
+
+### Comments owned by your app ✦ Extra
+
+```tsx
+<WordcraftEditor
+  comments={{
+    exclusive: true,                              // or nativePane: false
+    onRequestCompose: ({ anchor, quote, submit, cancel }) => openMyComposer({ quote, onPost: submit, onCancel: cancel }),
+    onOpenComment: (id) => showThread(id),        // a balloon or highlight was clicked
+  }}
+/>
+```
+
+- **The pane never opens.** Not from the selection toolbar, the ribbon, the right-click menu, Ctrl+Alt+M, the phone palette or a balloon.
+- **Compose before create.** Every New Comment asks for a composer on the selection: yours (`onRequestCompose`), or without it the package's drawer, opened with its composer on the selection. No comment exists until it is submitted with text, so cancelling leaves nothing.
+- **The host API** works whatever `disabledCommands` says, so you can turn off WordCraft's comment buttons and still write comments from your panel. The package keeps the anchors and highlights.
+
+```ts
+const id = editor.comments.create({ text: 'Check this figure', anchor });   // anchor defaults to the selection
+editor.comments.reply(id, 'Done');
+editor.comments.edit(id, 'Check this figure again');
+editor.comments.resolve(id); editor.comments.reopen(id);
+editor.comments.delete(id);
+editor.comments.list();          // the same as editor.comments()
+editor.comments.focus(id);       // select the commented text and scroll to it
+const off = editor.comments.onChange((list) => setComments(list));
+```
+
+`<CommentsDrawer editor={editor} />` is the drawer on its own, for your sidebar: it fills the element you put it in, at any width.
+
+## Your own screen ✦ Extra
+
+**Every surface is a switch.** `ui` takes a boolean for each part of the editor. `false` removes it from the page with its room and its shortcuts; leave a key out to keep it. Changes apply live, with no remount: the document, the selection and a co-editing session carry on.
+
+```tsx
+<WordcraftEditor
+  ui={{
+    titleBar: false,          // everything in the top bar: AutoSave, Quick Access, title, search, avatars, Share, account
+    ribbon: false,            // the ribbon and its tab row ('tabs' keeps only the tab row)
+    statusBar: false, selectionToolbar: false, contextMenu: false,
+    rulers: false, navigationPane: false,
+    workspace: { ask: false, comments: true, checks: false, tools: false, voice: false },  // or false for none
+    presence: false, share: false, modeSwitch: false, zoom: false, viewSwitcher: false,
+    fileMenu: false,          // also turns off Ctrl+S, Ctrl+O, Ctrl+P...
+    mobilePalette: false,
+  }}
+/>
+<WordcraftEditor ui="paper" />   // the page alone
+```
+
+With `ui="paper"` you can build your own toolbar on the headless API: `editor.state()` and `onStateChange` for what is on at the selection, `isActive('bold')`, `can('file.print')`, and `execute` for the commands. `icons={{ ask, comments, checks, tools, voice }}` swaps in your own icons.
+
+**Your own top bar.** `topBar` replaces WordCraft's title bar with three zones, each an ordered list:
+
+```tsx
+<WordcraftEditor
+  onShare={() => openShareDialog()}
+  topBar={({ permission, user, collaborators }) => ({
+    left: [{ type: 'back', href: '/documents', label: 'Documents', confirmUnsaved: true }, { type: 'quickAccess', items: ['undo', 'redo', 'separator', 'print'] }, 'title', 'saveState'],
+    center: [{ type: 'custom', id: 'status', render: () => <StatusPill /> }],
+    right: ['presence', 'comments', 'history', { type: 'share', disabled: permission === 'view' ? 'Only editors can share' : false }, { type: 'user', menu: [{ label: 'Profile', onClick: openProfile }, { label: 'Sign out', separator: true, onClick: signOut }] }],
+  })}
+/>
+```
+
+- **Built-in items:** `back`, `quickAccess`, `title`, `saveState`, `presence`, `share`, `user`, `comments`, `history`. Your own: `{ type: 'button', label, icon, onClick }` or `{ type: 'custom', render }`.
+- **Back** sits at the far left, takes `onClick` or `href`, a label and an icon, asks first when the document is unsaved (`confirmUnsaved`), works from the keyboard, and hides itself without a handler.
+- **Presence:** each avatar in that person's cursor colour; click to follow them; the rest collapse to "+N"; people without a name show as "Guest".
+- **Share** can be renamed, restyled, hidden, or disabled with a reason shown as its tooltip. **User** is the signed-in person's avatar with your menu. **Quick access** is your choice and order of undo, redo, save, print, find, your buttons and separators.
+- **Narrow widths:** the title shortens first, then the avatars collapse to "+N", then Share becomes an icon. Nothing overflows at 360px.
+
+**The File menu, item by item.** Pass a list (its order is the menu's; WordCraft's items you leave out are hidden) or settings by id:
+
+```tsx
+<WordcraftEditor
+  fileMenu={[
+    { id: 'info' }, { id: 'save' },
+    { id: 'print', disabled: 'Printing is off for this document' },
+    { id: 'share', onSelect: openShareDialog },
+    { id: 'export', label: 'Download' },
+    { id: 'export.docx', hidden: true },               // PDF allowed, Word refused
+    { id: 'moveToFolder', label: 'Move to folder', section: 'Organise', onSelect: moveToFolder },
+  ]}
+/>
+```
+
+WordCraft's ids are `home`, `new`, `open`, `info`, `recover`, `save`, `saveAs`, `print`, `share`, `export`, `close` and `options`, and each export format is its own: `export.pdf`, `export.docx`, `export.xml`, `export.wordml2003`, `export.odt`, `export.rtf`, `export.html`, `export.md`, `export.tex`, `export.txt`, `export.png`. A hidden or disabled item's shortcut is off too (hiding print turns off Ctrl+P). `fileMenu`, like `topBar`, can be a function of `{ permission, user, collaborators }`.
 
 ## Fonts
 

@@ -18,8 +18,13 @@ import type { VersionHistoryOptions } from './versions.js';
 import type { AiOptions } from './ai.js';
 import { MobileShell } from './mobile.js';
 import type { MobileOptions } from './mobile.js';
-import { CommentsButton, CommentsPanel, openThreads, useCommentSync } from './comments.js';
+import { CommentsButton, CommentsPanel, hostOwnsComments, openThreads, selectionAnchor, useCommentSync } from './comments.js';
 import type { CommentsOptions, Person } from './comments.js';
+import { resolveFileMenu, resolveUi, uiDisabled, uiPrefs, workspaceOn } from './surfaces.js';
+import type { FileMenuOptions, IconsOptions, SurfaceContext, UiProp } from './surfaces.js';
+import { TopBar, resolveTopBar } from './topbar.js';
+import type { TopBarProp } from './topbar.js';
+import type { CommentAnchor } from './core.js';
 import { AccessChip, Notice, PresenceAvatars, WorkspaceRow, applyPermission, canComment, canWrite, lowerPermission } from './workspace.js';
 import type { Permission } from './workspace.js';
 import type { ChangeInfo, Collaboration, DocumentSource, EditorMode, FontSource, PresenceUser, RibbonDisplay, RibbonTab, SavedFile, WordcraftEditor as Editor, WordcraftOptions, WordcraftPrefs, WordcraftUser } from './core.js';
@@ -47,8 +52,12 @@ export { VersionHistory } from './history.js';
 export type { VersionHistoryHandle, VersionHistoryProps } from './history.js';
 export type { AiBarProps, AiOptions, AiProviderConfig, AiProviderId } from './ai.js';
 export { MOBILE_PALETTE, MobileShell } from './mobile.js';
-export { CommentsPanel, CommentsButton, useCommentSync, personColor } from './comments.js';
-export type { CommentEvent, CommentEventType, CommentStore, CommentsOptions, CommentsPanelProps, Person, StoredComment } from './comments.js';
+export { CommentsDrawer, CommentsPanel, CommentsButton, hostOwnsComments, selectionAnchor, useCommentSync, personColor } from './comments.js';
+export type { CommentEvent, CommentEventType, CommentStore, CommentsDrawerProps, CommentsOptions, CommentsPanelProps, ComposeRequest, Person, StoredComment } from './comments.js';
+export { EXPORT_IDS, FILE_MENU_IDS, PAPER_UI, resolveFileMenu, resolveUi, uiPrefs } from './surfaces.js';
+export type { FileMenuId, FileMenuItem, FileMenuOptions, IconsOptions, SurfaceContext, UiOptions, UiProp, WorkspaceSwitches } from './surfaces.js';
+export { DEFAULT_TOP_BAR, Presence, TopBar, compactLevel } from './topbar.js';
+export type { QuickAccessEntry, TopBarBack, TopBarButton, TopBarCustom, TopBarItem, TopBarOptions, TopBarProp, TopBarProps, TopBarShare, TopBarUser, UserMenuItem } from './topbar.js';
 export { AccessChip, PERMISSION_LABEL, PresenceAvatars, applyPermission, canComment, canWrite } from './workspace.js';
 export type { Permission } from './workspace.js';
 export type { FormatState, MobileOptions, MobileShellProps, MobileTabId, PaletteItem, PaletteState, PaletteTab, ViewState } from './mobile.js';
@@ -105,8 +114,8 @@ export interface WordcraftEditorProps {
   autoSave?: boolean;
   /** Show the title bar (AutoSave, Quick Access Toolbar, title, search, avatar). Default true. */
   titleBar?: boolean;
-  /** Ribbon Display Options, as in Word: `full` (default), `tabs` (tabs only) or `hidden`. */
-  ribbon?: RibbonDisplay;
+  /** Ribbon Display Options, as in Word: `full` (default), `tabs` (tabs only) or `hidden` (`false` too: no ribbon and no tab row). */
+  ribbon?: RibbonDisplay | boolean;
   /**
    * Real-time co-editing, e.g. `yjsCollaboration({ doc, provider })` from
    * `@gamine/wordcraft-react/collab`. Keep it stable (create it once, or in `useMemo`): a new
@@ -214,6 +223,26 @@ export interface WordcraftEditorProps {
    */
   onSave?: (file: SavedFile, editor: Editor) => void | Promise<void>;
   onError?: (error: Error) => void;
+  /**
+   * Every surface of the editor, each a boolean (`false` removes it, its room and its shortcuts),
+   * or `'paper'` for the page alone. Changes apply live: no remount, nothing lost. ✦ Extra.
+   */
+  ui?: UiProp;
+  /** Your own icons for Ask, Comments, Checks, Tools, Voice, Share, Back and History. */
+  icons?: IconsOptions;
+  /**
+   * Your own top bar in place of WordCraft's title bar (✦ Extra): `true` for the default, or
+   * `{ left, center, right }` lists of items. Can be a function of `{ permission, user, collaborators }`.
+   */
+  topBar?: TopBarProp;
+  /**
+   * The File menu, item by item: show, hide, rename, disable with a reason, replace with your own
+   * action, reorder, group into sections, add your own. Hidden or disabled items' shortcuts are off.
+   * Can be a function of `{ permission, user, collaborators }`.
+   */
+  fileMenu?: FileMenuOptions | ((ctx: SurfaceContext) => FileMenuOptions);
+  /** Share (title bar, File menu, top bar) asks you instead of WordCraft's own Share dialog. */
+  onShare?: () => void;
 }
 
 /** The ref handle: the editor once mounted, otherwise `null`. */
@@ -252,6 +281,7 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
   // Latest props for callbacks, so changing a handler never remounts the editor.
   const latest = useRef(props);
   latest.current = props;
+  const presenceRef = useRef<PresenceUser[]>([]);
 
   // The phone layout: on narrow touch screens (or when asked), measured on the container.
   const [isMobile, setIsMobile] = useState(false);
@@ -298,9 +328,9 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
       user: userOf(p),
       autoSave: p.autoSave,
       mode: p.mode,
-      disabledCommands: p.disabledCommands,
+      disabledCommands: [...(p.disabledCommands ?? []), ...surfaceDisabled(p, mountContext(p))],
       fonts: p.fonts,
-      prefs: mergedPrefs(p, isMobileAtMount(el, p.mobile), false),
+      prefs: mergedPrefs(p, isMobileAtMount(el, p.mobile), false, mountContext(p)),
       aiButton: !!(p.ai && p.ai !== true && p.ai.ribbonButton),
       versionHistory: !!p.versionHistory,
       onChange: (info) => instance && latest.current.onChange?.(info, instance),
@@ -336,13 +366,22 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
 
   // Keep the save handler in sync with whether an onSave prop is present.
   const hasOnSave = !!props.onSave;
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     if (!editor || editor.destroyed) return;
     editor.setOnSave(
       hasOnSave
         ? (file) => {
             if (file.reason === 'save') void history.current?.record('save');
-            return latest.current.onSave?.(file, editor);
+            const out = latest.current.onSave?.(file, editor);
+            if (out && typeof (out as Promise<void>).then === 'function') {
+              setSaving(true);
+              void (out as Promise<void>).then(
+                () => setSaving(false),
+                () => setSaving(false),
+              );
+            }
+            return out;
           }
         : null,
     );
@@ -383,7 +422,9 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
   // Mode, access level and turned-off commands follow their props. The access level wins over
   // the mode: a viewer stays in Viewing, a suggester in Reviewing.
   const permission: Permission = props.permission ?? 'edit';
-  const disabledKey = JSON.stringify(props.disabledCommands ?? []);
+  // The host's list, plus what hidden surfaces and File items turn off (computed below).
+  const surfaceCtx: SurfaceContext = { permission, user: userOf(props), collaborators: presenceRef.current };
+  const disabledKey = JSON.stringify([...(props.disabledCommands ?? []), ...surfaceDisabled(props, surfaceCtx)]);
   const [notice, setNotice] = useState('');
   const lastPermission = useRef<Permission | null>(null);
   useEffect(() => {
@@ -409,6 +450,9 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
 
   // Comments: the panel and the host's store.
   const commentOptions: CommentsOptions | null = props.comments === true ? {} : props.comments ? props.comments : null;
+  const hostComments = hostOwnsComments(commentOptions);
+  const [compose, setCompose] = useState<{ anchor: CommentAnchor; quote: string; nonce: number } | null>(null);
+  const [focusComment, setFocusComment] = useState<number | null>(null);
   const people: Person[] = Array.isArray(commentOptions?.people) ? commentOptions.people : [];
   const [assignees, setAssignees] = useState(() => new Map<number, Person | null>());
   const comments = useCommentSync(commentOptions ? editor : null, commentOptions, people, assignees);
@@ -423,9 +467,66 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
     latest.current.onCommentsOpenChange?.(v);
   };
 
+  // Events from WordCraft's own UI for the page: compose, a comment's balloon, Share, File items.
+  const fileActions = resolveFileMenu(fileMenuOf(props, { permission, user: userOf(props), collaborators: presenceRef.current })).actions;
+  const fileActionsRef = useRef(fileActions);
+  fileActionsRef.current = fileActions;
+  const hostEvent = useRef<(event: string) => void>(() => {});
+  hostEvent.current = (event: string) => {
+    if (!editor || editor.destroyed) return;
+    const o = commentOptions;
+    if (event === 'compose' && o) {
+      const anchor = selectionAnchor(editor);
+      if (!anchor) {
+        setNotice('Select the text you want to comment on, then add your comment.');
+        return;
+      }
+      const quote = editor.getSelectedText();
+      if (o.onRequestCompose) {
+        let done = false;
+        o.onRequestCompose({
+          anchor,
+          quote,
+          submit: (text) => {
+            if (done) throw new Error('This composer was already used.');
+            const id = editor.comments.create({ text, anchor });
+            done = true;
+            return id;
+          },
+          cancel: () => {
+            done = true;
+          },
+        });
+      } else {
+        setCompose({ anchor, quote, nonce: Date.now() });
+        setCommentsOpen(true);
+      }
+    } else if (event === 'comments' && o) {
+      if (o.onRequestCompose && o.onOpenComment) return;
+      setCommentsOpen(true);
+    } else if (event.startsWith('comment:') && o) {
+      const id = Number(event.slice(8));
+      if (!Number.isFinite(id)) return;
+      if (o.onOpenComment) return o.onOpenComment(id);
+      setFocusComment(id);
+      setCommentsOpen(true);
+    } else if (event === 'share') {
+      latest.current.onShare?.();
+    } else if (event.startsWith('file:')) {
+      const act = fileActionsRef.current.get(event.slice(5));
+      if (act) act();
+      else console.warn(`[wordcraft] no action for File item "${event.slice(5)}"`);
+    }
+  };
+  useEffect(() => {
+    if (!editor || editor.destroyed) return;
+    return editor.onHostEvent((e) => hostEvent.current(e));
+  }, [editor]);
+
   // Presence: who else is here, and following one of them.
   const [presence, setPresence] = useState<PresenceUser[]>([]);
   const [following, setFollowing] = useState<string | null>(null);
+  presenceRef.current = presence;
   useEffect(() => {
     if (!collaboration?.onPresence) return;
     return collaboration.onPresence(setPresence);
@@ -547,10 +648,16 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
   }, [editor, isMobile]);
 
   // Live preference changes.
-  const prefsKey = JSON.stringify(mergedPrefs(props, isMobile, mobileSeen.current));
+  const prefsKey = JSON.stringify(mergedPrefs(props, isMobile, mobileSeen.current, { permission, user: userOf(props), collaborators: presence }));
+  // A surface the props stop mentioning goes back to its default (turning `ui` off again shows it).
+  const appliedPrefs = useRef<Partial<WordcraftPrefs>>({});
   useEffect(() => {
     if (!editor || editor.destroyed) return;
-    editor.setPrefs(JSON.parse(prefsKey) as Partial<WordcraftPrefs>);
+    const next = JSON.parse(prefsKey) as Partial<WordcraftPrefs>;
+    const patch: Partial<WordcraftPrefs> = { ...next };
+    for (const k of Object.keys(appliedPrefs.current)) if (!(k in next) && k in SURFACE_DEFAULTS) patch[k] = SURFACE_DEFAULTS[k as keyof typeof SURFACE_DEFAULTS];
+    appliedPrefs.current = next;
+    editor.setPrefs(patch);
   }, [editor, prefsKey]);
 
   // A new `document` prop after mount loads that document.
@@ -561,13 +668,38 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
     editor.load(props.document).catch((e: unknown) => latest.current.onError?.(e instanceof Error ? e : new Error(String(e))));
   }, [editor, props.document]);
 
+  // The host's surfaces.
+  const ui = resolveUi(props.ui);
+  const icons = props.icons ?? {};
+  const dark = props.dark ?? props.prefs?.dark;
+  const topBar = isMobile ? null : resolveTopBar(props.topBar, { permission, user: userOf(props), collaborators: presence });
+  const ws = (k: Parameters<typeof workspaceOn>[1]) => workspaceOn(ui, k);
+  const rowPanels = available.filter((p) => (p === 'chat' ? ws('ask') : p === 'checks' ? ws('checks') : ws('tools')));
+  const showComments = !!commentOptions && (permission !== 'view' || props.commentsVisibleToViewers !== false);
+  const showVoice = !!tools.voice && voice.available && canWrite(permission) && ws('voice');
+  const showPresenceRow = !!collaboration && props.presence !== false && ui.presence !== false && !topBar && presence.some((u) => !u.self);
+  const showRow = ui.workspace !== false && (
+    (props.permission && ws('access')) || (showComments && ws('comments')) || rowPanels.length > 0 || showVoice || showPresenceRow
+  );
+
   return (
-    <div
-      ref={containerRef}
-      className={className}
-      data-wordcraft-root=""
-      style={{ position: 'relative', width: '100%', height, overflow: 'hidden', ...style }}
-    >
+    <div className={className} data-wordcraft-root="" style={{ position: 'relative', display: 'flex', flexDirection: 'column', width: '100%', height, overflow: 'hidden', ...style }}>
+      {editor && topBar && !versionsOpen && (
+        <TopBar
+          editor={editor}
+          options={topBar}
+          context={{ permission, user: userOf(props), collaborators: props.presence === false || ui.presence === false ? [] : presence }}
+          icons={icons}
+          dark={dark}
+          following={following}
+          onFollow={follow}
+          comments={showComments ? { count: openThreads(comments), onClick: () => (hostComments && commentOptions?.onOpenComment && commentOptions.onRequestCompose ? latest.current.onCommentsOpenChange?.(true) : setCommentsOpen(!commentsOpen)) } : null}
+          onHistory={versionOptions ? () => setVersionsOpen(true) : undefined}
+          onShare={props.onShare}
+          saving={saving}
+        />
+      )}
+      <div ref={containerRef} data-wordcraft-stage="" style={{ position: 'relative', flex: '1 1 auto', minHeight: 0, width: '100%', overflow: 'hidden' }}>
       {!editor && !error && loading}
       {editor && versionOptions && (
         <VersionHistory
@@ -596,14 +728,16 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
           openComments={commentOptions ? openThreads(comments) : 0}
           people={collaboration && props.presence !== false ? presence.filter((u) => !u.self).length : 0}
           extraItems={available.map((p) => ({ label: PANEL_LABEL[p], onPress: () => setPanel(p) }))}
+          palette={ui.mobilePalette !== false}
+          hostComments={hostComments}
         />
       )}
-      {editor && !isMobile && !versionsOpen && (props.permission || commentOptions || available.length > 0 || (tools.voice && voice.available) || (collaboration && props.presence !== false && presence.some((u) => !u.self))) && (
-        <WorkspaceRow dark={props.dark ?? props.prefs?.dark}>
-          <ToolsBar available={available} open={panel} onOpen={setPanel} issues={checks.issues.length} voice={tools.voice && voice.available && canWrite(permission) ? voice : null} />
-          {props.permission && <AccessChip level={permission} />}
-          {collaboration && props.presence !== false && <PresenceAvatars users={presence} following={following} onFollow={follow} />}
-          {commentOptions && !commentsOpen && (permission !== 'view' || props.commentsVisibleToViewers !== false) && <CommentsButton count={openThreads(comments)} onClick={() => setCommentsOpen(true)} />}
+      {editor && !isMobile && !versionsOpen && showRow && (
+        <WorkspaceRow dark={dark} bottom={ui.statusBar === false ? 12 : undefined}>
+          <ToolsBar available={rowPanels} open={panel} onOpen={setPanel} issues={checks.issues.length} voice={showVoice ? voice : null} icons={icons} />
+          {props.permission && ws('access') && <AccessChip level={permission} />}
+          {showPresenceRow && <PresenceAvatars users={presence} following={following} onFollow={follow} />}
+          {showComments && ws('comments') && !commentsOpen && <CommentsButton count={openThreads(comments)} onClick={() => setCommentsOpen(true)} icon={icons.comments} />}
         </WorkspaceRow>
       )}
       {editor && commentOptions && commentsOpen && !versionsOpen && (
@@ -616,9 +750,16 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
           canComment={canComment(permission)}
           assignees={assignees}
           onAssign={(id, p) => setAssignees((m) => new Map(m).set(id, p))}
-          onClose={() => setCommentsOpen(false)}
+          onClose={() => {
+            setCommentsOpen(false);
+            setCompose(null);
+            setFocusComment(null);
+          }}
           dark={props.dark ?? props.prefs?.dark}
           sheet={isMobile}
+          compose={compose}
+          onComposeDone={() => setCompose(null)}
+          focusId={focusComment}
         />
       )}
       {editor && panel && !versionsOpen && !commentsOpen && (() => {
@@ -654,7 +795,7 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
           options={ai}
           open={aiOpen}
           onOpenChange={setAiOpen}
-          launcher={ai.launcher !== 'none' && !isMobile && canWrite(permission)}
+          launcher={ai.launcher !== 'none' && !isMobile && canWrite(permission) && ui.workspace !== false && ws('ask')}
           readOnly={!canWrite(permission)}
           bottom={isMobile ? 64 : undefined}
           dark={props.dark ?? props.prefs?.dark}
@@ -663,9 +804,29 @@ export const WordcraftEditor = forwardRef<Editor, WordcraftEditorProps>(function
         />
       )}
       {error && (typeof fallback === 'function' ? fallback(error) : (fallback ?? <DefaultFallback error={error} />))}
+      </div>
     </div>
   );
 });
+
+/** What each surface preference is when nothing asks otherwise. */
+const SURFACE_DEFAULTS = {
+  hideTitleBar: false,
+  hideRibbon: false,
+  ribbonCollapsed: false,
+  hideStatusBar: false,
+  miniToolbar: true,
+  hideContextMenu: false,
+  hideRulers: false,
+  hideNavPane: false,
+  hidePresence: false,
+  hideShare: false,
+  hideModeSwitch: false,
+  hideCommentsButton: false,
+  hideZoom: false,
+  hideViewSwitcher: false,
+  hiddenTabs: [] as string[],
+};
 
 /** Below this container width (CSS pixels) a touch screen gets the phone layout, as Word does at 600dp. */
 export const MOBILE_BREAKPOINT = 600;
@@ -680,13 +841,38 @@ function isMobileAtMount(el: HTMLElement, mobile: WordcraftEditorProps['mobile']
  * The preferences for the props. The phone layout hides WordCraft's own title bar, ribbon, status
  * bar and mini toolbar (it draws its own); leaving it (`restore`) brings back what the props ask for.
  */
-function mergedPrefs(p: WordcraftEditorProps, mobile = false, restore = false): Partial<WordcraftPrefs> {
+function mergedPrefs(p: WordcraftEditorProps, mobile = false, restore = false, ctx?: SurfaceContext): Partial<WordcraftPrefs> {
   const out: Partial<WordcraftPrefs> = { ...(p.prefs ?? {}) };
   if (p.dark !== undefined) out.dark = p.dark;
-  const tabs = p.tabs || p.hiddenTabs ? { hiddenTabs: hiddenTabsFor(p.tabs, p.hiddenTabs) } : {};
-  if (mobile) return { ...out, ...tabs, hideTitleBar: true, hideRibbon: true, ribbonCollapsed: false, hideStatusBar: true, miniToolbar: false };
+  const ui = resolveUi(p.ui);
+  const hidden = hiddenTabsFor(p.tabs, p.hiddenTabs);
+  if (ui.fileMenu === false && !hidden.includes('File')) hidden.push('File');
+  const tabs = p.tabs || p.hiddenTabs || ui.fileMenu === false ? { hiddenTabs: hidden } : {};
+  // What the host owns: comments, Share and the File menu's arrangement.
+  const owned: Partial<WordcraftPrefs> = {
+    hostComments: hostOwnsComments(p.comments === true ? {} : p.comments || null),
+    hostShare: !!p.onShare,
+    fileMenu: resolveFileMenu(fileMenuOf(p, ctx)).pref,
+  };
+  if (mobile) return { ...out, ...tabs, ...owned, hideTitleBar: true, hideRibbon: true, ribbonCollapsed: false, hideStatusBar: true, miniToolbar: false, hideContextMenu: ui.contextMenu === false };
   const desktop = restore ? { hideTitleBar: false, hideRibbon: false, hideStatusBar: false, miniToolbar: p.prefs?.miniToolbar ?? true } : {};
-  return { ...out, ...desktop, ...chromePrefs(p.titleBar, p.ribbon), ...tabs };
+  // Your own top bar takes the title bar's place, and Share moves there from the ribbon's corner.
+  const top = ctx && resolveTopBar(p.topBar, ctx) ? { hideTitleBar: true, ...(ui.share === undefined ? { hideShare: true } : {}) } : {};
+  return { ...out, ...desktop, ...chromePrefs(p.titleBar, p.ribbon), ...uiPrefs(ui), ...top, ...tabs, ...owned };
+}
+
+function fileMenuOf(p: WordcraftEditorProps, ctx?: SurfaceContext): FileMenuOptions | undefined {
+  if (typeof p.fileMenu !== 'function') return p.fileMenu;
+  return ctx ? p.fileMenu(ctx) : undefined;
+}
+
+/** Commands hidden surfaces and File items turn off (their shortcuts too). */
+function surfaceDisabled(p: WordcraftEditorProps, ctx: SurfaceContext): string[] {
+  return [...uiDisabled(resolveUi(p.ui)), ...resolveFileMenu(fileMenuOf(p, ctx)).disabled];
+}
+
+function mountContext(p: WordcraftEditorProps): SurfaceContext {
+  return { permission: p.permission ?? 'edit', user: userOf(p), collaborators: [] };
 }
 
 function userOf(p: WordcraftEditorProps): WordcraftUser | undefined {

@@ -35,6 +35,11 @@ Rows marked ✦ are **Extras**: features that are not part of Microsoft Word or 
 | Commands | All available | The host can turn commands off; they are greyed and refused (`disabledCommands`) | Patch 0003 |
 | User name | Set in File › Options | Set by the host (`user`) and shown on the avatar | Package |
 | Opening the editor | A full page app | Mounts inside any element; React component and framework-agnostic core; safe with server rendering | Package |
+| Every surface on or off ✦ | Title bar and ribbon only | One `ui` prop with a boolean per surface (title bar, ribbon and its tab row, status bar, selection toolbar, context menu, rulers, Navigation pane, presence, Share, mode switch, zoom, page-view buttons, File menu, the workspace row's buttons, the phone palette), or `'paper'` for the page alone. A hidden surface takes no room and its shortcuts don't bring it back. Applied live | Patch 0008, Package |
+| The host's top bar ✦ | WordCraft's title bar | `topBar` replaces it with left, centre and right zones of built-in items (back, quick access, title, save state, presence, Share, user menu, comments, history) and the host's own buttons, giving way in order at narrow widths | Package |
+| File menu ✦ | WordCraft's pages | `fileMenu`: show, hide, rename, disable with a reason, replace or reorder each item, group them into sections, add the host's own, and the same for each export format (`export.pdf`, `export.docx`...). Hidden items' shortcuts are off; Share is a File item | Patch 0008, Package |
+| Share | WordCraft's dialog | `onShare` hands it to the host, from the title bar, the File menu and the top bar | Patch 0008 |
+| Headless toolbar API ✦ | Not exposed to a host | `editor.state()`, `onStateChange`, `isActive` and `can` for a toolbar of the host's own | Package |
 
 ## Saving and files
 
@@ -83,6 +88,8 @@ Rows marked ✦ are **Extras**: features that are not part of Microsoft Word or 
 |---|---|---|---|
 | Access levels | Restrict Editing (read only, comments, tracked changes) chosen in the document | A `permission` prop (view, comment, suggest, edit) the host sets and changes live, with a chip and a notice; it drives Restrict Editing and the mode, and locks the switches | Package |
 | Comments panel ✦ | Word's comment cards in the margin | Also a panel of threads with filters (Open, Resolved, Mine, Mentions me, author), @mentions with a people picker, Assign to, and a store adapter for every change | Package |
+| Comments owned by the host ✦ | New Comment makes an empty comment and opens the comments pane | `comments.exclusive`: the pane never opens from any entry point, and New Comment asks for a composer on the selection (`onRequestCompose`, or the package's drawer). Nothing exists until it is submitted with text. A balloon click asks the host to open that thread | Patch 0008, Package |
+| Host comment API ✦ | Comment commands, which `disabledCommands` can turn off | `editor.comments.create`, `reply`, `edit`, `delete`, `resolve`, `reopen`, `list`, `focus` and `onChange`, never blocked by `disabledCommands`, and a standalone `<CommentsDrawer/>` | Package |
 | Presence avatars ✦ | Collaborators' avatars in the title bar (patch 0002) | Also a row at the bottom right with idle state, a `+n` counter and following, and `onPresenceChange` for the host | Package |
 | Reading the document ✦ | Not exposed to a host | `editor.paragraphs()`, `editor.comments()`, `selectText` and marks over the text (`setMarks`) for host panels | Package |
 | Organisation letterhead | Not available | `ai.letterhead` is the organisation's, read live; a person's edits are a separate override with Reset; `letterheadLocked` and `onLetterheadApplied` | Package |

@@ -14,6 +14,7 @@ upstream as-is. When upstream accepts one, delete it here.
 | 0005 | Windows-style inline tools (Bullets, Numbering and New Comment on the mini toolbar, and the toolbar above the context menu), rulers that follow the page in view and open Page Setup on a double-click, font-box previews for web fonts, and Version History's entry points (the title, which reads "Name • Saved", and File › Info) |
 | 0006 | Hiding the status bar, so a host can draw its own phone interface (the package's mobile layout) around the page |
 | 0007 | Custom theme colours for Design › Colors (`design.themeColors` with `colors`, written to `word/theme/theme1.xml`), and editing the first page's or even pages' header and footer (`insert.editHeader` and `insert.editFooter` with `kind`), for the brand theme and logo placement |
+| 0008 | The host owns more of the screen: comments (New Comment asks the host to compose, no empty comment, the pane never opens, balloon clicks go to the host), Share, the File menu item by item (hide, rename, disable with a reason, host actions, sections, each export format), and switches for the context menu, rulers, Navigation pane, presence, Share, the mode switch, the Comments button, zoom and the page-view buttons |
 
 The patches were made against the upstream commit in `BASE`. Every sync rebases them onto the new
 upstream with a three-way merge and refreshes them, so they only need a person when both sides

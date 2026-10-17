@@ -703,6 +703,67 @@ impl WordcraftHandle {
         self.with_app(|app| app.run(id, params)).map(|v| v.to_string())
     }
 
+    /// Run one of the host's own comment commands. Unlike `execute`, the commands the host turned
+    /// off (`disabledCommands`) don't apply: a host that turns off WordCraft's comment buttons
+    /// still writes comments through its own panel. Viewing mode and Restrict Editing still do.
+    #[wasm_bindgen(js_name = executeHost)]
+    pub fn execute_host(&self, id: &str, params: Option<String>) -> Result<String, JsValue> {
+        const HOST: [&str; 8] = [
+            "review.newComment",
+            "review.reply",
+            "review.editComment",
+            "review.deleteComment",
+            "review.resolveComment",
+            "select.range",
+            "format.state",
+            "view.state",
+        ];
+        if !HOST.contains(&id) {
+            return Err(err(format!("{id} is not a host command")));
+        }
+        let params: Value = match params.as_deref() {
+            None | Some("") => json!({}),
+            Some(s) => serde_json::from_str(s).map_err(|e| err(format!("params: {e}")))?,
+        };
+        self.with_app(|app| {
+            let off = std::mem::take(&mut app.session.disabled_commands);
+            let out = app.run(id, params);
+            app.session.disabled_commands = off;
+            out
+        })
+        .map(|v| v.to_string())
+    }
+
+    /// The paragraph at the caret for a host toolbar: `{align, bullets, numbering, collapsed}`.
+    /// `align` is as seen on the page (`left`, `center`, `right`, `justify`).
+    #[wasm_bindgen(js_name = paraState)]
+    pub fn para_state(&self) -> Result<String, JsValue> {
+        use wordcraft_doc::props::Align;
+        self.with_app(|app| {
+            let s = &app.session;
+            let rp = s.doc.para_at(&s.sel.focus).map(|p| s.doc.styles.resolve_para(&p.props));
+            let align = match rp.as_ref().map(|r| r.align.visual(r.bidi)).unwrap_or_default() {
+                Align::Left => "left",
+                Align::Center => "center",
+                Align::Right => "right",
+                Align::Justify | Align::Distribute => "justify",
+            };
+            let lists = wordcraft_engine::cmd::para::list_buttons(&s.doc, rp.as_ref().and_then(|r| r.numbering));
+            Ok(json!({"align": align, "bullets": lists.bullets, "numbering": lists.numbering, "collapsed": s.sel.anchor == s.sel.focus}).to_string())
+        })
+    }
+
+    /// Why command `id` can't run now, or an empty string when it can (turned off, Viewing mode,
+    /// or the command's own state).
+    #[wasm_bindgen(js_name = whyNot)]
+    pub fn why_not(&self, id: &str) -> Result<String, JsValue> {
+        self.with_app(|app| {
+            let s = &app.session;
+            let Some(spec) = s.registry.get(id) else { return Ok("unknown command".into()) };
+            Ok(s.host_block(id, spec.mutates).or_else(|| (spec.enabled)(s)).unwrap_or_default().to_string())
+        })
+    }
+
     /// Every engine command with its label, ribbon location, shortcut and params doc, as JSON.
     pub fn commands(&self) -> Result<String, JsValue> {
         self.with_app(|app| Ok(app.session.registry.describe().to_string()))
@@ -769,7 +830,13 @@ impl WordcraftHandle {
             let mut base = serde_json::to_value(app.prefs()).map_err(|e| e.to_string())?;
             merge_json(&mut base, &patch);
             let ui: UiState = serde_json::from_value(base).map_err(|e| e.to_string())?;
+            // Upstream's apply_prefs opens on Home (as Word does at launch); a live change keeps
+            // the tab showing, or moves to the one asked for.
+            let tab = patch.get("tab").and_then(Value::as_str).map_or_else(|| app.ui.tab.clone(), str::to_string);
+            let backstage = patch.get("backstage").and_then(Value::as_bool).unwrap_or(app.ui.backstage);
             app.apply_prefs(ui);
+            app.ui.tab = tab;
+            app.ui.backstage = backstage;
             Ok(())
         })
     }
@@ -1090,7 +1157,11 @@ impl WordcraftHandle {
         self.with_app(|app| {
             let a = pos_at(&app.session.doc, &path, start as usize).ok_or("no paragraph at that path")?;
             let b = pos_at(&app.session.doc, &path, end as usize).ok_or("no paragraph at that path")?;
-            app.run("select.range", json!({"anchor": a, "focus": b}))?;
+            // The host's own call: commands it turned off for people don't apply.
+            let off = std::mem::take(&mut app.session.disabled_commands);
+            let out = app.run("select.range", json!({"anchor": a, "focus": b}));
+            app.session.disabled_commands = off;
+            out?;
             app.canvas.scroll_to_caret = true;
             Ok(())
         })

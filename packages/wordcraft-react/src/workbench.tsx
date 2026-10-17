@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 
 import type { SelectionInfo, WordcraftEditor } from './core.js';
+import type { IconsOptions } from './surfaces.js';
 import { AiStar } from './ai.js';
 import { DIAGRAM_TITLE } from './blocks.js';
 
@@ -24,7 +25,7 @@ export const PANEL_LABEL: Record<PanelId, string> = {
   translate: 'Translate document',
 };
 
-export function ToolsBar({ available, open, onOpen, issues, voice }: { available: PanelId[]; open: PanelId | null; onOpen: (p: PanelId | null) => void; issues: number; voice?: { on: boolean; toggle: () => void; error: string } | null }) {
+export function ToolsBar({ available, open, onOpen, issues, voice, icons = {} }: { available: PanelId[]; open: PanelId | null; onOpen: (p: PanelId | null) => void; issues: number; voice?: { on: boolean; toggle: () => void; error: string } | null; icons?: IconsOptions }) {
   const [menu, setMenu] = useState(false);
   const rest = available.filter((p) => p !== 'chat' && p !== 'checks');
   return (
@@ -32,25 +33,28 @@ export function ToolsBar({ available, open, onOpen, issues, voice }: { available
       <style>{CSS}</style>
       {available.includes('chat') && open !== 'chat' && (
         <button type="button" className="wccm-launch wcwb-ask" onClick={() => onOpen('chat')} title="Ask this document (an Extra)">
-          <AiStar size={16} /> Ask
+          {icons.ask ?? <AiStar size={16} />} Ask
         </button>
       )}
       {available.includes('checks') && open !== 'checks' && (
         <button type="button" className="wccm-launch" onClick={() => onOpen('checks')} title="Writing checks (an Extra)" aria-label={`Writing checks, ${issues} suggestions`}>
-          <span className="wcwb-dot" data-zero={issues === 0 ? '' : undefined} /> {issues}
+          {icons.checks ?? <span className="wcwb-dot" data-zero={issues === 0 ? '' : undefined} />} {issues}
         </button>
       )}
       {voice && (
         <button type="button" className="wccm-launch" aria-pressed={voice.on} onClick={voice.toggle} title={voice.error || (voice.on ? 'Stop voice typing' : 'Voice typing')}>
-          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
-            <path fill={voice.on ? '#d93025' : 'currentColor'} d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z" />
-          </svg>
+          {icons.voice ?? (
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill={voice.on ? '#d93025' : 'currentColor'} d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z" />
+            </svg>
+          )}
           {voice.on ? 'Listening' : ''}
         </button>
       )}
       {rest.length > 0 && (
         <span className="wcwb-anchor">
           <button type="button" className="wccm-launch" aria-expanded={menu} onClick={() => setMenu(!menu)}>
+            {icons.tools}
             Tools ▾
           </button>
           {menu && (
