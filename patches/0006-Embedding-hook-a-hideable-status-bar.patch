@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Mon, 12 Oct 2026 08:06:33 +0300
-Subject: [PATCH 6/7] Embedding hook: a hideable status bar
+Subject: [PATCH 6/8] Embedding hook: a hideable status bar
 
 A host that draws its own phone interface can hide the status bar with the hideStatusBar preference, as it hides the title bar and ribbon.
 ---

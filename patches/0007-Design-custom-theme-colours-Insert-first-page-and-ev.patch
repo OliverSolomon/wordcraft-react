@@ -1,14 +1,14 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Oliver Solomon <47696354+OliverSolomon@users.noreply.github.com>
 Date: Tue, 13 Oct 2026 18:25:15 +0000
-Subject: [PATCH 7/7] Design: custom theme colours; Insert: first-page and
+Subject: [PATCH 7/8] Design: custom theme colours; Insert: first-page and
  even-page headers and footers
 
 ---
  .prepared                       |   1 +
- crates/engine/src/cmd/design.rs |  69 ++++++++++++++++++++--
- crates/engine/src/cmd/insert.rs | 101 +++++++++++++++++++++++++++++---
- 3 files changed, 156 insertions(+), 15 deletions(-)
+ crates/engine/src/cmd/design.rs |  69 ++++++++++++++++++--
+ crates/engine/src/cmd/insert.rs | 107 +++++++++++++++++++++++++++++---
+ 3 files changed, 162 insertions(+), 15 deletions(-)
  create mode 100644 .prepared
 
 diff --git a/.prepared b/.prepared
@@ -110,7 +110,7 @@ index d1fedc16..558dab63 100644
 +    }
 +}
 diff --git a/crates/engine/src/cmd/insert.rs b/crates/engine/src/cmd/insert.rs
-index 2b453df4..3d4c0fdd 100644
+index 2b453df4..90a9974e 100644
 --- a/crates/engine/src/cmd/insert.rs
 +++ b/crates/engine/src/cmd/insert.rs
 @@ -55,15 +55,15 @@ pub fn specs() -> Vec<CommandSpec> {
@@ -193,7 +193,7 @@ index 2b453df4..3d4c0fdd 100644
      }
      id
  }
-@@ -590,6 +625,21 @@ fn header_footer(s: &mut Session, v: &Value, header: bool) -> CmdResult {
+@@ -590,6 +625,27 @@ fn header_footer(s: &mut Session, v: &Value, header: bool) -> CmdResult {
  }
  
  fn edit_hf(s: &mut Session, v: &Value, header: bool) -> CmdResult {
@@ -202,7 +202,13 @@ index 2b453df4..3d4c0fdd 100644
 +    let kind = HfKind::parse(v)?;
 +    if kind != HfKind::Default {
 +        let block = s.sel.focus.path.0.first().copied().unwrap_or(0) as usize;
-+        let set = s.doc.sections().into_iter().find(|(end, _)| block <= *end).or_else(|| s.doc.sections().pop()).map(|(_, sp)| if header { sp.headers } else { sp.footers });
++        let set = s
++            .doc
++            .sections()
++            .into_iter()
++            .find(|(end, _)| block <= *end)
++            .or_else(|| s.doc.sections().pop())
++            .map(|(_, sp)| if header { sp.headers } else { sp.footers });
 +        let existing = set.and_then(|set| if kind == HfKind::First { set.first } else { set.even }).filter(|id| s.doc.parts.contains_key(id));
 +        let Some(id) = existing else {
 +            let cmd = if header { "insert.createHeader" } else { "insert.createFooter" };
@@ -215,7 +221,7 @@ index 2b453df4..3d4c0fdd 100644
      let page = p::u64(v, "page").map(|page| usize::try_from(page).unwrap_or(usize::MAX));
      let shown = match page {
          Some(page) => shown_hf(s, page, header)?,
-@@ -628,6 +678,16 @@ fn shown_hf(s: &mut Session, page: usize, header: bool) -> Result<Option<u32>, C
+@@ -628,6 +684,16 @@ fn shown_hf(s: &mut Session, page: usize, header: bool) -> Result<Option<u32>, C
  }
  
  fn create_hf(s: &mut Session, v: &Value, header: bool) -> CmdResult {
@@ -232,7 +238,7 @@ index 2b453df4..3d4c0fdd 100644
      let id = match p::u64(v, "page") {
          Some(page) => {
              let page = usize::try_from(page).unwrap_or(usize::MAX);
-@@ -1141,3 +1201,26 @@ mod tests {
+@@ -1141,3 +1207,26 @@ mod tests {
          assert_eq!(date_picture("DATE"), None);
      }
  }

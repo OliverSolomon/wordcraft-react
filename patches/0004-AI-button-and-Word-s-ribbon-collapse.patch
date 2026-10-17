@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Sun, 11 Oct 2026 08:03:35 +0300
-Subject: [PATCH 4/7] AI button and Word's ribbon collapse
+Subject: [PATCH 4/8] AI button and Word's ribbon collapse
 
 - WordApp::ai_button shows a sparkle button beside Comments for hosts that
   offer AI; clicks queue "ai" in WordApp::host_events.

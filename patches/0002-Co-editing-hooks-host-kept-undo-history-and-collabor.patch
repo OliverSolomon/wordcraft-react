@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Sat, 10 Oct 2026 19:48:53 +0300
-Subject: [PATCH 2/7] Co-editing hooks: host-kept undo history and
+Subject: [PATCH 2/8] Co-editing hooks: host-kept undo history and
  collaborators in the title bar
 
 - Session::external_history lets a host that keeps its own history (real-time

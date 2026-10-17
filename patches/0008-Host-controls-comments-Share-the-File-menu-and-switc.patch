@@ -1,0 +1,776 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliver Solomon <47696354+OliverSolomon@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 11:35:16 +0000
+Subject: [PATCH 8/8] Host controls: comments, Share, the File menu and
+ switches for each surface
+
+New Comment asks the host to compose (no empty comment, the pane never
+opens, balloon clicks go to the host), Share can go to the host, the File
+menu can be arranged item by item (each export format too), and the host can
+hide the context menu, rulers, Navigation pane, presence, Share, the mode
+switch, the Comments button, zoom and the page-view buttons.
+---
+ crates/ui-egui/src/backstage.rs  | 125 +++++++++++++++-
+ crates/ui-egui/src/canvas.rs     |  15 +-
+ crates/ui-egui/src/chrome.rs     | 102 ++++++-------
+ crates/ui-egui/src/lib.rs        |  86 +++++++++++
+ crates/ui-egui/src/print_page.rs |  17 ++-
+ crates/ui-egui/src/ribbon.rs     | 244 ++++++++++++++++---------------
+ 6 files changed, 416 insertions(+), 173 deletions(-)
+
+diff --git a/crates/ui-egui/src/backstage.rs b/crates/ui-egui/src/backstage.rs
+index f98483fe..6c16a239 100644
+--- a/crates/ui-egui/src/backstage.rs
++++ b/crates/ui-egui/src/backstage.rs
+@@ -70,11 +70,38 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+                 app.canvas.want_focus = true;
+             }
+             ui.add_space(if mac { 12.0 } else { 6.0 });
+-            for (id, label) in PAGES {
++            // The host may arrange the menu (`file_menu`): its order, names, sections and its own items.
++            let items = nav_items(app);
++            let mut section = String::new();
++            for item in items {
++                let id = item.id.as_str();
++                if !item.section.is_empty() && item.section != section {
++                    ui.add_space(8.0);
++                    let (r, resp) = ui.allocate_exact_size(vec2(200.0, 22.0), Sense::hover());
++                    // A heading screen readers can read too.
++                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &item.section));
++                    ui.painter().text(
++                        pos2(r.min.x + 22.0, r.center().y),
++                        Align2::LEFT_CENTER,
++                        &item.section,
++                        semibold(11.0),
++                        egui::Color32::from_white_alpha(170),
++                    );
++                }
++                section.clone_from(&item.section);
++                let label = if !item.label.is_empty() {
++                    item.label.as_str()
++                } else if id == "share" {
++                    tl!("Share")
++                } else {
++                    PAGES.iter().find(|(p, _)| *p == id).map_or(id, |(_, l)| tl!(*l))
++                };
++                let known = PAGES.iter().any(|(p, _)| *p == id) || id == "share";
+                 // No document open (#1129): Info, Save, Save As, Print and Export are greyed out.
+-                let on = has_document || works_without_document(id);
++                let on = item.disabled.is_empty() && (has_document || works_without_document(id) || !known);
+                 let (r, resp) = ui.add_enabled_ui(on, |ui| ui.allocate_exact_size(vec2(200.0, 38.0), Sense::click())).inner;
+-                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, on, tl!(label)));
++                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, on, label));
++                let resp = if item.disabled.is_empty() { resp } else { resp.on_disabled_hover_text(&item.disabled) };
+                 let active = app.ui.backstage_page == id;
+                 if active {
+                     ui.painter().rect_filled(r, 0.0, egui::Color32::from_white_alpha(46));
+@@ -84,11 +111,15 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+                 ui.painter().text(
+                     pos2(r.min.x + 22.0, r.center().y),
+                     Align2::LEFT_CENTER,
+-                    tl!(label),
++                    label,
+                     if active { semibold(14.0) } else { medium(14.0) },
+                     if on { egui::Color32::WHITE } else { egui::Color32::from_white_alpha(110) },
+                 );
+                 if resp.clicked() {
++                    if item.host || !known {
++                        app.host_events.push(format!("file:{id}"));
++                        continue;
++                    }
+                     match id {
+                         // A document without a file goes to the Save As page (as in Word) instead
+                         // of `file.save`, which would also open the native Save As dialog.
+@@ -113,6 +144,9 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+                         "close" => {
+                             let _ = app.run("file.close", json!({}));
+                         }
++                        "share" => {
++                            let _ = app.run("file.share", json!({}));
++                        }
+                         _ => app.ui.backstage_page = id.into(),
+                     }
+                 }
+@@ -157,6 +191,18 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+         });
+ }
+ 
++/// The File menu's items: the host's arrangement (`file_menu`), shown items only, or WordCraft's.
++fn nav_items(app: &WordApp) -> Vec<crate::FileMenuItem> {
++    let own = || PAGES.iter().map(|(id, _)| crate::FileMenuItem { id: (*id).into(), ..Default::default() });
++    let items: Vec<crate::FileMenuItem> = if app.ui.file_menu.iter().any(|i| !i.id.starts_with("export.")) {
++        app.ui.file_menu.iter().filter(|i| !i.id.starts_with("export.")).cloned().collect()
++    } else {
++        // Only per-item settings for pages the host left in place.
++        own().map(|d| crate::FileMenuItem::find(&app.ui.file_menu, &d.id).cloned().unwrap_or(d)).collect()
++    };
++    items.into_iter().filter(|i| !i.hidden).collect()
++}
++
+ /// Recovery is a separate copy. Leaving this page never discards it.
+ fn recovery_page(app: &mut WordApp, ui: &mut Ui) {
+     ui.visuals_mut().override_text_color = Some(egui::Color32::WHITE);
+@@ -870,3 +916,74 @@ mod tests {
+         assert_eq!(h.state().ui.backstage_page, "saveAs");
+     }
+ }
++
++#[cfg(test)]
++mod host_menu_tests {
++    use egui::accesskit::Role;
++    use egui_kittest::kittest::{NodeT as _, Queryable};
++    use serde_json::json;
++
++    use crate::{FileMenuItem, Services, WordApp};
++
++    fn harness(a: WordApp) -> egui_kittest::Harness<'static, WordApp> {
++        egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
++            |ui, app: &mut WordApp| {
++                let ctx = ui.ctx().clone();
++                app.logic(&ctx);
++                app.ui(ui);
++            },
++            a,
++        )
++    }
++
++    fn item(id: &str) -> FileMenuItem {
++        FileMenuItem { id: id.into(), ..Default::default() }
++    }
++
++    #[test]
++    fn the_host_arranges_the_file_menu() {
++        let mut a = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::from_text("x")), Services::default());
++        a.ui.file_menu = vec![
++            FileMenuItem { label: "Download a copy".into(), ..item("export") },
++            FileMenuItem { section: "Organise".into(), ..item("moveToFolder") },
++            FileMenuItem { label: "Move to folder".into(), section: "Organise".into(), ..item("moveToFolder2") },
++            FileMenuItem { disabled: "Printing is off for this document".into(), ..item("print") },
++            FileMenuItem { hidden: true, ..item("open") },
++            item("share"),
++            FileMenuItem { hidden: true, ..item("export.docx") },
++            FileMenuItem { label: "PDF for the board".into(), ..item("export.pdf") },
++        ];
++        a.run("ui.backstage", json!({"value": true, "page": "export"})).unwrap();
++        let mut h = harness(a);
++        h.run_steps(4);
++        assert!(h.query_by_label("Download a copy").is_some(), "renamed");
++        assert!(h.query_by_label("Open").is_none(), "hidden");
++        assert!(h.query_by_label("Share").is_some(), "Share is a File item");
++        assert!(h.query_by_label("Organise").is_some(), "a section heading");
++        assert!(h.query_by_label("PDF for the board").is_some(), "an export format renamed");
++        assert!(h.query_by_label("Word document (*.docx)").is_none(), "an export format hidden");
++        h.get_by_role_and_label(Role::Button, "Move to folder").click();
++        h.run_steps(2);
++        assert!(h.state().host_events.iter().any(|e| e == "file:moveToFolder2"), "the host's own item asks the host: {:?}", h.state().host_events);
++        assert!(h.get_by_label("Print").accesskit_node().is_disabled(), "disabled with a reason");
++    }
++
++    #[test]
++    fn host_comments_never_make_an_empty_comment_or_open_the_pane() {
++        let mut a = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::from_text("Hello world")), Services::default());
++        a.ui.host_comments = true;
++        a.run("select.all", json!({})).unwrap();
++        // Ribbon, mini toolbar, context menu and Ctrl+Alt+M all run this.
++        a.run("review.newComment", json!({})).unwrap();
++        assert!(a.session.doc.comments.is_empty(), "no empty comment");
++        assert_eq!(a.host_events, vec!["compose".to_string()]);
++        a.run("view.commentsPane", json!({"value": true})).unwrap();
++        assert!(!a.session.view.comments_pane, "the pane stays shut");
++        // The host's own comment (with text) is made, and the pane still stays shut.
++        a.run("review.newComment", json!({"text": "Check this"})).unwrap();
++        assert_eq!(a.session.doc.comments.len(), 1);
++        let mut h = harness(a);
++        h.run_steps(2);
++        assert!(!h.state().session.view.comments_pane);
++    }
++}
+diff --git a/crates/ui-egui/src/canvas.rs b/crates/ui-egui/src/canvas.rs
+index 61ac0dda..f091ae73 100644
+--- a/crates/ui-egui/src/canvas.rs
++++ b/crates/ui-egui/src/canvas.rs
+@@ -838,7 +838,8 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+     // View › Switch Modes: dark paper, inverted document colours.
+     let dark_page = app.session.view.dark_mode;
+     let dark_paper = wordcraft_render::DARK_PAPER;
+-    let show_ruler = app.session.view.ruler && app.session.view.mode == wordcraft_layout::ViewMode::Print && !app.session.view.read_mode;
++    let show_ruler =
++        !app.ui.hide_rulers && app.session.view.ruler && app.session.view.mode == wordcraft_layout::ViewMode::Print && !app.session.view.read_mode;
+     let (hruler, vruler, area) = if show_ruler {
+         let h = Rect::from_min_max(pos2(full.min.x + RULER, full.min.y), pos2(full.max.x, full.min.y + RULER));
+         let v = Rect::from_min_max(pos2(full.min.x, full.min.y + RULER), pos2(full.min.x + RULER, full.max.y));
+@@ -1539,7 +1540,10 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+     } else if secondary_clicked {
+         app.canvas.context_menu_at = resp.interact_pointer_pos();
+     }
+-    let open = if secondary_clicked || from_keys {
++    // The host may turn the context menu off: a right-click then does nothing more.
++    let open = if app.ui.hide_context_menu && (secondary_clicked || from_keys) {
++        Some(egui::SetOpenCommand::Bool(false))
++    } else if secondary_clicked || from_keys {
+         Some(egui::SetOpenCommand::Bool(true))
+     } else if resp.clicked() {
+         Some(egui::SetOpenCommand::Bool(false))
+@@ -1812,8 +1816,13 @@ fn balloons(app: &mut WordApp, ui: &mut Ui, painter: &egui::Painter, rects: &[Re
+         }
+     }
+     if let Some((id, p)) = clicked {
+-        select_balloon(app, ui.ctx(), id);
+         app.session.sel = wordcraft_engine::Selection::caret(p);
++        // The host owns comments: it shows this one in its own panel; no in-place editing here.
++        if app.ui.host_comments {
++            app.host_events.push(format!("comment:{id}"));
++        } else {
++            select_balloon(app, ui.ctx(), id);
++        }
+     }
+ }
+ 
+diff --git a/crates/ui-egui/src/chrome.rs b/crates/ui-egui/src/chrome.rs
+index edfa92ed..3d969c3d 100644
+--- a/crates/ui-egui/src/chrome.rs
++++ b/crates/ui-egui/src/chrome.rs
+@@ -293,7 +293,7 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
+                         let _ = app.run("ui.backstage", json!({"value": true, "page": "options", "pane": "general"}));
+                     }
+                     // People editing at the same time, as in Word's co-authoring.
+-                    for c in app.collaborators.iter().take(6) {
++                    for c in app.collaborators.iter().take(if app.ui.hide_presence { 0 } else { 6 }) {
+                         let (r, resp) = ui.allocate_exact_size(vec2(24.0, 26.0), Sense::hover());
+                         let fill = egui::Color32::from_rgb(c.color[0], c.color[1], c.color[2]);
+                         ui.painter().circle_filled(r.center(), 11.0, fill);
+@@ -498,57 +498,61 @@ pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
+                 }
+                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                     ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+-                    let reading = app.session.view.read_mode;
+-                    let z = (if reading { app.session.view.read_zoom } else { app.canvas.scale / crate::canvas::PX_PER_PT } * 100.0).round();
+-                    let ztxt = format!("{z}%");
+-                    let zfont = TypeRung::Caption.regular();
+-                    let ztrack = TypeRung::Caption.tracking();
+-                    let zw = text_width(ui.painter(), &ztxt, &zfont, ztrack, t.text_dim);
+-                    let (zr, zresp) = ui.allocate_exact_size(vec2(zw + 1.0, TypeRung::Caption.line_height()), Sense::click());
+-                    paint_text(ui.painter(), pos2(zr.min.x, zr.min.y), Align2::LEFT_TOP, &ztxt, &zfont, ztrack, t.text_dim);
+-                    if zresp.clicked() && !reading {
+-                        let _ = app.run("ui.dialog", json!({ "name": "zoom" }));
+-                    }
+-                    if small_icon(ui, "plus", tl!("Zoom In")) {
+-                        if reading {
+-                            let _ = app.run("view.readTextSize", json!({"value": (z + 10.0).min(150.0)}));
+-                        } else {
+-                            let _ = app.run("view.zoomIn", json!({}));
++                    if !app.ui.hide_zoom {
++                        let reading = app.session.view.read_mode;
++                        let z = (if reading { app.session.view.read_zoom } else { app.canvas.scale / crate::canvas::PX_PER_PT } * 100.0).round();
++                        let ztxt = format!("{z}%");
++                        let zfont = TypeRung::Caption.regular();
++                        let ztrack = TypeRung::Caption.tracking();
++                        let zw = text_width(ui.painter(), &ztxt, &zfont, ztrack, t.text_dim);
++                        let (zr, zresp) = ui.allocate_exact_size(vec2(zw + 1.0, TypeRung::Caption.line_height()), Sense::click());
++                        paint_text(ui.painter(), pos2(zr.min.x, zr.min.y), Align2::LEFT_TOP, &ztxt, &zfont, ztrack, t.text_dim);
++                        if zresp.clicked() && !reading {
++                            let _ = app.run("ui.dialog", json!({ "name": "zoom" }));
+                         }
+-                    }
+-                    // Reading zoom changes only reading presentation, never the normal view zoom.
+-                    let mut v = if reading { app.session.view.read_zoom } else { app.canvas.scale / crate::canvas::PX_PER_PT };
+-                    let slider = egui::Slider::new(&mut v, if reading { 0.75..=1.5 } else { 0.1..=5.0 }).logarithmic(!reading).show_value(false);
+-                    ui.spacing_mut().slider_width = 110.0;
+-                    if ui.add(slider).changed() {
+-                        let command = if reading { "view.readTextSize" } else { "view.zoom" };
+-                        let _ = app.run(command, json!({"value": (v * 100.0).round()}));
+-                    }
+-                    if small_icon(ui, "minus", tl!("Zoom Out")) {
+-                        if reading {
+-                            let _ = app.run("view.readTextSize", json!({"value": (z - 10.0).max(75.0)}));
+-                        } else {
+-                            let _ = app.run("view.zoomOut", json!({}));
++                        if small_icon(ui, "plus", tl!("Zoom In")) {
++                            if reading {
++                                let _ = app.run("view.readTextSize", json!({"value": (z + 10.0).min(150.0)}));
++                            } else {
++                                let _ = app.run("view.zoomIn", json!({}));
++                            }
+                         }
+-                    }
+-                    ui.add_space(10.0);
+-                    let mode = app.session.view.mode;
+-                    let read = app.session.view.read_mode;
+-                    for (icon, id, name, on) in [
+-                        ("webLayout", "view.webLayout", tl!("Web Layout"), mode == wordcraft_layout::ViewMode::Web),
+-                        ("printLayout", "view.printLayout", tl!("Print Layout"), mode == wordcraft_layout::ViewMode::Print && !read),
+-                        ("readMode", "view.readMode", tl!("Read Mode"), read),
+-                    ] {
+-                        let (r, resp) = ui.allocate_exact_size(vec2(22.0, 20.0), Sense::click());
+-                        if on {
+-                            ui.painter().rect_filled(r, 3.0, t.checked);
+-                        } else if resp.hovered() {
+-                            ui.painter().rect_filled(r, 3.0, t.hover);
++                        // Reading zoom changes only reading presentation, never the normal view zoom.
++                        let mut v = if reading { app.session.view.read_zoom } else { app.canvas.scale / crate::canvas::PX_PER_PT };
++                        let slider = egui::Slider::new(&mut v, if reading { 0.75..=1.5 } else { 0.1..=5.0 }).logarithmic(!reading).show_value(false);
++                        ui.spacing_mut().slider_width = 110.0;
++                        if ui.add(slider).changed() {
++                            let command = if reading { "view.readTextSize" } else { "view.zoom" };
++                            let _ = app.run(command, json!({"value": (v * 100.0).round()}));
++                        }
++                        if small_icon(ui, "minus", tl!("Zoom Out")) {
++                            if reading {
++                                let _ = app.run("view.readTextSize", json!({"value": (z - 10.0).max(75.0)}));
++                            } else {
++                                let _ = app.run("view.zoomOut", json!({}));
++                            }
+                         }
+-                        icons::paint(ui.painter(), r.shrink(3.0), icon, t.icon, t.accent);
+-                        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, name));
+-                        if resp.on_hover_text(name).clicked() {
+-                            let _ = app.run(id, json!({}));
++                    }
++                    if !app.ui.hide_view_switcher {
++                        ui.add_space(10.0);
++                        let mode = app.session.view.mode;
++                        let read = app.session.view.read_mode;
++                        for (icon, id, name, on) in [
++                            ("webLayout", "view.webLayout", tl!("Web Layout"), mode == wordcraft_layout::ViewMode::Web),
++                            ("printLayout", "view.printLayout", tl!("Print Layout"), mode == wordcraft_layout::ViewMode::Print && !read),
++                            ("readMode", "view.readMode", tl!("Read Mode"), read),
++                        ] {
++                            let (r, resp) = ui.allocate_exact_size(vec2(22.0, 20.0), Sense::click());
++                            if on {
++                                ui.painter().rect_filled(r, 3.0, t.checked);
++                            } else if resp.hovered() {
++                                ui.painter().rect_filled(r, 3.0, t.hover);
++                            }
++                            icons::paint(ui.painter(), r.shrink(3.0), icon, t.icon, t.accent);
++                            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, name));
++                            if resp.on_hover_text(name).clicked() {
++                                let _ = app.run(id, json!({}));
++                            }
+                         }
+                     }
+                     ui.add_space(8.0);
+diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
+index 53bfa3f1..f69ac061 100644
+--- a/crates/ui-egui/src/lib.rs
++++ b/crates/ui-egui/src/lib.rs
+@@ -221,6 +221,31 @@ fn paste_target(canvas_focused: bool, backstage: bool, dialog: bool) -> bool {
+     canvas_focused && !backstage && !dialog
+ }
+ 
++/// One File menu item as the host arranges it (see [`UiState::file_menu`]).
++#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
++#[serde(default, rename_all = "camelCase")]
++pub struct FileMenuItem {
++    /// `new`, `open`, `info`, `save`, `saveAs`, `print`, `share`, `export`, `close`, `options`,
++    /// `export.pdf`, `export.docx`…, or the host's own.
++    pub id: String,
++    /// Shown instead of WordCraft's name; empty keeps it.
++    pub label: String,
++    pub hidden: bool,
++    /// Greyed out with this reason as its tooltip; empty: enabled.
++    pub disabled: String,
++    /// Clicking asks the host (`file:<id>`) instead of doing WordCraft's action.
++    pub host: bool,
++    /// A heading shown above this item when it differs from the previous item's.
++    pub section: String,
++}
++
++impl FileMenuItem {
++    /// The host's entry for `id`, if it arranged the menu.
++    pub fn find<'a>(items: &'a [FileMenuItem], id: &str) -> Option<&'a FileMenuItem> {
++        items.iter().find(|i| i.id == id)
++    }
++}
++
+ /// UI state that persists between runs (and that agents can read and set).
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ #[serde(default, rename_all = "camelCase")]
+@@ -269,6 +294,30 @@ pub struct UiState {
+     pub hide_ribbon: bool,
+     /// Embedded: hide the status bar (page, words, zoom), as on a phone.
+     pub hide_status_bar: bool,
++    /// Embedded: the host owns comments. New Comment (from any button, menu or shortcut) asks the
++    /// host to compose one (host event `compose`) instead of making an empty comment; the
++    /// Comments pane never opens (`comments`); a balloon click asks the host to show that comment
++    /// (`comment:<id>`).
++    pub host_comments: bool,
++    /// Embedded: Share asks the host (host event `share`) instead of opening File › Export.
++    pub host_share: bool,
++    /// Embedded: surfaces the host turns off, each removed with its space.
++    pub hide_context_menu: bool,
++    pub hide_rulers: bool,
++    pub hide_nav_pane: bool,
++    /// The co-authors' avatars in the title bar.
++    pub hide_presence: bool,
++    /// The tab strip's Share button, Editing/Reviewing/Viewing switch and Comments button.
++    pub hide_share: bool,
++    pub hide_mode_switch: bool,
++    pub hide_comments_button: bool,
++    /// The status bar's zoom controls and its Web Layout / Print Layout / Read Mode buttons.
++    pub hide_zoom: bool,
++    pub hide_view_switcher: bool,
++    /// Embedded: the File menu as the host arranges it, in order. Empty: WordCraft's own. An id
++    /// WordCraft doesn't know, or an item marked `host`, asks the host (host event `file:<id>`).
++    /// Items `export.<ext>` arrange File › Export's formats the same way.
++    pub file_menu: Vec<FileMenuItem>,
+     /// Embedded: ribbon tabs the host doesn't offer (`File`, `Home`, `Insert`, `Draw`, ...).
+     pub hidden_tabs: Vec<String>,
+     /// Fonts picked lately, newest first (Word's "Recently Used Fonts").
+@@ -368,6 +417,18 @@ impl Default for UiState {
+             hide_title_bar: false,
+             hide_ribbon: false,
+             hide_status_bar: false,
++            host_comments: false,
++            host_share: false,
++            hide_context_menu: false,
++            hide_rulers: false,
++            hide_nav_pane: false,
++            hide_presence: false,
++            hide_share: false,
++            hide_mode_switch: false,
++            hide_comments_button: false,
++            hide_zoom: false,
++            hide_view_switcher: false,
++            file_menu: Vec::new(),
+             hidden_tabs: Vec::new(),
+             recent_fonts: Vec::new(),
+             editing: wordcraft_engine::Prefs::default(),
+@@ -806,6 +867,23 @@ impl WordApp {
+     /// Close, Envelopes, Labels and Finish & Merge on a document with unsaved changes first ask
+     /// Save / Don't Save / Cancel, and the command runs once that is answered (`ui.saveChanges`).
+     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
++        // The host owns comments: every New Comment (ribbon, mini toolbar, context menu,
++        // Ctrl+Alt+M) asks it to compose one, and no empty comment is made; the pane stays shut.
++        if self.ui.host_comments {
++            if id == "review.newComment" && params.get("text").and_then(Value::as_str).is_none_or(|t| t.trim().is_empty()) {
++                self.host_events.push("compose".into());
++                return Ok(json!({"pending": "compose"}));
++            }
++            if id == "view.commentsPane" {
++                self.session.view.comments_pane = false;
++                self.host_events.push("comments".into());
++                return Ok(json!({"pending": "comments"}));
++            }
++        }
++        if self.ui.host_share && id == "file.share" {
++            self.host_events.push("share".into());
++            return Ok(json!({"pending": "share"}));
++        }
+         if id == "file.recover" && params.as_object().is_none_or(|p| p.is_empty()) {
+             self.ui.backstage = true;
+             self.ui.backstage_page = "recover".into();
+@@ -2152,6 +2230,14 @@ impl WordApp {
+         // Keytips are read before layout so the frame paints the new state; badges paint after
+         // the ribbon so they sit on top of it.
+         crate::keytips::logic(self, &ctx);
++        // Surfaces the host turned off stay off whatever turned them on (a command, a search hit).
++        if self.ui.host_comments {
++            self.session.view.comments_pane = false;
++            self.canvas.balloon = None;
++        }
++        if self.ui.hide_nav_pane {
++            self.session.view.nav_pane = false;
++        }
+         // Focus (View › Immersive, the status bar) keeps only the title bar and the page; Escape
+         // brings the rest back, as in Word.
+         if self.session.view.focus_mode && self.dialog.is_none() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+diff --git a/crates/ui-egui/src/print_page.rs b/crates/ui-egui/src/print_page.rs
+index 490b7386..917ade0a 100644
+--- a/crates/ui-egui/src/print_page.rs
++++ b/crates/ui-egui/src/print_page.rs
+@@ -323,8 +323,21 @@ pub fn export_formats(app: &mut WordApp, ui: &mut Ui) {
+         ("Plain text (*.txt)", "txt"),
+         ("Page image (*.png)", "png"),
+     ] {
+-        if ui.add(egui::Button::new(egui::RichText::new(tl!(label)).font(medium(13.5))).min_size(vec2(320.0, 34.0))).clicked() {
+-            app.export_dialog(ext);
++        // The host may hide, rename, refuse (with a reason) or take over each format (`export.<ext>`).
++        let item = crate::FileMenuItem::find(&app.ui.file_menu, &format!("export.{ext}")).cloned().unwrap_or_default();
++        if item.hidden {
++            continue;
++        }
++        let text = if item.label.is_empty() { tl!(label) } else { item.label.as_str() };
++        let resp =
++            ui.add_enabled(item.disabled.is_empty(), egui::Button::new(egui::RichText::new(text).font(medium(13.5))).min_size(vec2(320.0, 34.0)));
++        let resp = if item.disabled.is_empty() { resp } else { resp.on_disabled_hover_text(&item.disabled) };
++        if resp.clicked() {
++            if item.host {
++                app.host_events.push(format!("file:export.{ext}"));
++            } else {
++                app.export_dialog(ext);
++            }
+         }
+         ui.add_space(4.0);
+     }
+diff --git a/crates/ui-egui/src/ribbon.rs b/crates/ui-egui/src/ribbon.rs
+index 32f20221..11c4deee 100644
+--- a/crates/ui-egui/src/ribbon.rs
++++ b/crates/ui-egui/src/ribbon.rs
+@@ -228,58 +228,72 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
+                     }
+                     // Share, Editing mode, Comments, drawn first so the tabs get only the room
+                     // left of them (#897).
+-                    let share = tl!("Share");
+-                    let share_w = ui.ctx().fonts_mut(|f| f.layout_no_wrap(share.to_string(), medium(12.0), t.text).size().x);
+-                    let (r, resp) = ui.allocate_exact_size(vec2((share_w + 36.0).max(74.0), 24.0), Sense::click());
+-                    ui.painter().rect_filled(r, 4.0, if resp.hovered() { t.accent_text } else { t.accent });
+-                    icons::paint(
+-                        ui.painter(),
+-                        Rect::from_center_size(pos2(r.min.x + 14.0, r.center().y), vec2(14.0, 14.0)),
+-                        "share",
+-                        t.on_accent,
+-                        t.on_accent,
+-                    );
+-                    ui.painter().text(pos2(r.min.x + 26.0, r.center().y), Align2::LEFT_CENTER, share, medium(12.0), t.on_accent);
+-                    if resp.on_hover_text(tl!("Export a copy to share (PDF, Word document)")).clicked() {
+-                        let _ = app.run("ui.backstage", json!({"value": true, "page": "export"}));
+-                    }
+-                    ui.add_space(6.0);
+-                    // Word's mode switch: Editing, Reviewing (Track Changes) or Viewing.
+-                    let track = app.session.doc.settings.track_changes;
+-                    let (icon, label) = if app.session.viewing {
+-                        ("readMode", tl!("Viewing"))
+-                    } else if track {
+-                        ("trackChanges", tl!("Reviewing"))
+-                    } else {
+-                        ("pencil", tl!("Editing"))
+-                    };
+-                    let mode = crate::widgets::icon_text_menu_button(ui, icon, label, regular(12.0));
+-                    egui::Popup::menu(&mode).show(|ui| {
+-                        let choices = [
+-                            ("editing", tl!("Editing — edit the document directly"), !track && !app.session.viewing),
+-                            ("reviewing", tl!("Reviewing — edits become suggestions"), track && !app.session.viewing),
+-                            ("viewing", tl!("Viewing — read or print, no changes"), app.session.viewing),
+-                        ];
+-                        for (mode, text, on) in choices {
+-                            // Word's two-line items: the mode, then what it does underneath.
+-                            let (name, what) = text.split_once(" — ").unwrap_or((text, ""));
+-                            let mut job = egui::text::LayoutJob::default();
+-                            let strong = ui.visuals().strong_text_color();
+-                            let weak = ui.visuals().weak_text_color();
+-                            job.append(name, 0.0, egui::TextFormat { font_id: crate::theme::semibold(13.0), color: strong, ..Default::default() });
+-                            if !what.is_empty() {
+-                                let what = format!("\n{}{}", what.get(..1).unwrap_or("").to_uppercase(), what.get(1..).unwrap_or(""));
+-                                job.append(&what, 0.0, egui::TextFormat { font_id: regular(11.5), color: weak, ..Default::default() });
++                    if !app.ui.hide_share {
++                        let share = tl!("Share");
++                        let share_w = ui.ctx().fonts_mut(|f| f.layout_no_wrap(share.to_string(), medium(12.0), t.text).size().x);
++                        let (r, resp) = ui.allocate_exact_size(vec2((share_w + 36.0).max(74.0), 24.0), Sense::click());
++                        ui.painter().rect_filled(r, 4.0, if resp.hovered() { t.accent_text } else { t.accent });
++                        icons::paint(
++                            ui.painter(),
++                            Rect::from_center_size(pos2(r.min.x + 14.0, r.center().y), vec2(14.0, 14.0)),
++                            "share",
++                            t.on_accent,
++                            t.on_accent,
++                        );
++                        ui.painter().text(pos2(r.min.x + 26.0, r.center().y), Align2::LEFT_CENTER, share, medium(12.0), t.on_accent);
++                        if resp.on_hover_text(tl!("Export a copy to share (PDF, Word document)")).clicked() {
++                            if app.ui.host_share {
++                                app.host_events.push("share".into());
++                            } else {
++                                let _ = app.run("ui.backstage", json!({"value": true, "page": "export"}));
+                             }
+-                            if crate::widgets::enabled(app, "ui.mode") && ui.selectable_label(on, job).clicked() {
+-                                let _ = app.run("ui.mode", json!({"mode": mode}));
+-                                ui.close();
++                        }
++                        ui.add_space(6.0);
++                    }
++                    if !app.ui.hide_mode_switch {
++                        // Word's mode switch: Editing, Reviewing (Track Changes) or Viewing.
++                        let track = app.session.doc.settings.track_changes;
++                        let (icon, label) = if app.session.viewing {
++                            ("readMode", tl!("Viewing"))
++                        } else if track {
++                            ("trackChanges", tl!("Reviewing"))
++                        } else {
++                            ("pencil", tl!("Editing"))
++                        };
++                        let mode = crate::widgets::icon_text_menu_button(ui, icon, label, regular(12.0));
++                        egui::Popup::menu(&mode).show(|ui| {
++                            let choices = [
++                                ("editing", tl!("Editing — edit the document directly"), !track && !app.session.viewing),
++                                ("reviewing", tl!("Reviewing — edits become suggestions"), track && !app.session.viewing),
++                                ("viewing", tl!("Viewing — read or print, no changes"), app.session.viewing),
++                            ];
++                            for (mode, text, on) in choices {
++                                // Word's two-line items: the mode, then what it does underneath.
++                                let (name, what) = text.split_once(" — ").unwrap_or((text, ""));
++                                let mut job = egui::text::LayoutJob::default();
++                                let strong = ui.visuals().strong_text_color();
++                                let weak = ui.visuals().weak_text_color();
++                                job.append(
++                                    name,
++                                    0.0,
++                                    egui::TextFormat { font_id: crate::theme::semibold(13.0), color: strong, ..Default::default() },
++                                );
++                                if !what.is_empty() {
++                                    let what = format!("\n{}{}", what.get(..1).unwrap_or("").to_uppercase(), what.get(1..).unwrap_or(""));
++                                    job.append(&what, 0.0, egui::TextFormat { font_id: regular(11.5), color: weak, ..Default::default() });
++                                }
++                                if crate::widgets::enabled(app, "ui.mode") && ui.selectable_label(on, job).clicked() {
++                                    let _ = app.run("ui.mode", json!({"mode": mode}));
++                                    ui.close();
++                                }
+                             }
++                        });
++                    }
++                    if !app.ui.hide_comments_button {
++                        ui.add_space(4.0);
++                        if crate::widgets::icon_text_button(ui, "comment", tl!("Comments"), regular(12.0)).clicked() {
++                            let _ = app.run("view.commentsPane", json!({}));
+                         }
+-                    });
+-                    ui.add_space(4.0);
+-                    if crate::widgets::icon_text_button(ui, "comment", tl!("Comments"), regular(12.0)).clicked() {
+-                        let _ = app.run("view.commentsPane", json!({}));
+                     }
+                     if app.ai_button {
+                         ui.add_space(4.0);
+@@ -414,76 +428,76 @@ fn corner_button(ui: &mut Ui, app: &mut WordApp, icon: &str, tip: &str) {
+ 
+ /// The ribbon's groups for the current tab, scrolled sideways when they don't fit.
+ fn ribbon_body(app: &mut WordApp, ui: &mut Ui, t: &Tokens, user_tabs: &[wordcraft_engine::ribbon::TabEntry]) {
+-        // Right-click on the ribbon (outside a button): Customize Ribbon. Registered first, so
+-        // the buttons drawn over it keep their own clicks.
+-        // No document open (#1129): every command is greyed out but Help's.
+-        if !app.has_document() && app.ui.tab != "Help" {
+-            ui.disable();
+-        }
+-        let bg = ui.interact(ui.max_rect(), ui.id().with("ribbon_background"), Sense::click());
+-        bg.context_menu(|ui| crate::widgets::customize_menu_items(ui, app));
+-        let entry = user_tabs.iter().find(|e| e.name == app.ui.tab);
+-        let scroll = egui::ScrollArea::horizontal().scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
+-            ui.horizontal_top(|ui| {
+-                ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
+-                match entry {
+-                    // Every tab hidden: nothing to show.
+-                    Some(e) if e.hidden => return,
+-                    Some(e) if e.custom => return custom_groups(app, ui, &e.groups),
+-                    _ => {}
+-                }
+-                match app.ui.tab.as_str() {
+-                    "Home" => home(app, ui),
+-                    "Insert" => insert(app, ui),
+-                    "Draw" => draw(app, ui),
+-                    "Design" => design(app, ui),
+-                    "Layout" => layout(app, ui),
+-                    "References" => references(app, ui),
+-                    "Mailings" => mailings(app, ui),
+-                    "Review" => review(app, ui),
+-                    "View" => view(app, ui),
+-                    "Developer" => developer(app, ui),
+-                    "Zotero" => zotero(app, ui),
+-                    "Help" => help(app, ui),
+-                    "Table Design" => table_design(app, ui),
+-                    "Table Layout" => table_layout(app, ui),
+-                    "Equation" if app.session.math.is_some() => crate::equation_tab::show(app, ui),
+-                    "Picture Format" => picture_format(app, ui),
+-                    "Shape Format" => shape_format(app, ui),
+-                    "SmartArt Design" => smart_art_design(app, ui),
+-                    "Outlining" => outlining(app, ui),
+-                    "Chart Design" => chart_design(app, ui),
+-                    _ => home(app, ui),
+-                }
+-                if let Some(e) = entry {
+-                    custom_groups(app, ui, &e.groups);
+-                }
+-            });
+-        });
+-        // The bar is hidden, so a row wider than the window would be clipped with no sign. Edge chevrons show
+-        // where more is and scroll it on click. Every command also stays reachable through Search Commands.
+-        let r = scroll.inner_rect;
+-        let overflow = scroll.content_size.x - r.width();
+-        let offset = scroll.state.offset.x;
+-        let step = 160.0;
+-        let mut next = None;
+-        if offset > 1.0 {
+-            let left = Rect::from_min_max(r.left_top(), pos2(r.left() + 18.0, r.bottom()));
+-            if edge_cue(ui, left, "‹", tl!("Scroll ribbon left"),  t) {
+-                next = Some(offset - step);
++    // Right-click on the ribbon (outside a button): Customize Ribbon. Registered first, so
++    // the buttons drawn over it keep their own clicks.
++    // No document open (#1129): every command is greyed out but Help's.
++    if !app.has_document() && app.ui.tab != "Help" {
++        ui.disable();
++    }
++    let bg = ui.interact(ui.max_rect(), ui.id().with("ribbon_background"), Sense::click());
++    bg.context_menu(|ui| crate::widgets::customize_menu_items(ui, app));
++    let entry = user_tabs.iter().find(|e| e.name == app.ui.tab);
++    let scroll = egui::ScrollArea::horizontal().scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
++        ui.horizontal_top(|ui| {
++            ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
++            match entry {
++                // Every tab hidden: nothing to show.
++                Some(e) if e.hidden => return,
++                Some(e) if e.custom => return custom_groups(app, ui, &e.groups),
++                _ => {}
+             }
+-        }
+-        if overflow - offset > 1.0 {
+-            let right = Rect::from_min_max(pos2(r.right() - 18.0, r.top()), r.right_bottom());
+-            if edge_cue(ui, right, "›", tl!("Scroll ribbon right"),  t) {
+-                next = Some(offset + step);
++            match app.ui.tab.as_str() {
++                "Home" => home(app, ui),
++                "Insert" => insert(app, ui),
++                "Draw" => draw(app, ui),
++                "Design" => design(app, ui),
++                "Layout" => layout(app, ui),
++                "References" => references(app, ui),
++                "Mailings" => mailings(app, ui),
++                "Review" => review(app, ui),
++                "View" => view(app, ui),
++                "Developer" => developer(app, ui),
++                "Zotero" => zotero(app, ui),
++                "Help" => help(app, ui),
++                "Table Design" => table_design(app, ui),
++                "Table Layout" => table_layout(app, ui),
++                "Equation" if app.session.math.is_some() => crate::equation_tab::show(app, ui),
++                "Picture Format" => picture_format(app, ui),
++                "Shape Format" => shape_format(app, ui),
++                "SmartArt Design" => smart_art_design(app, ui),
++                "Outlining" => outlining(app, ui),
++                "Chart Design" => chart_design(app, ui),
++                _ => home(app, ui),
+             }
++            if let Some(e) = entry {
++                custom_groups(app, ui, &e.groups);
++            }
++        });
++    });
++    // The bar is hidden, so a row wider than the window would be clipped with no sign. Edge chevrons show
++    // where more is and scroll it on click. Every command also stays reachable through Search Commands.
++    let r = scroll.inner_rect;
++    let overflow = scroll.content_size.x - r.width();
++    let offset = scroll.state.offset.x;
++    let step = 160.0;
++    let mut next = None;
++    if offset > 1.0 {
++        let left = Rect::from_min_max(r.left_top(), pos2(r.left() + 18.0, r.bottom()));
++        if edge_cue(ui, left, "‹", tl!("Scroll ribbon left"), t) {
++            next = Some(offset - step);
+         }
+-        if let Some(x) = next {
+-            let mut state = scroll.state;
+-            state.offset.x = x.clamp(0.0, overflow.max(0.0));
+-            state.store(ui.ctx(), scroll.id);
++    }
++    if overflow - offset > 1.0 {
++        let right = Rect::from_min_max(pos2(r.right() - 18.0, r.top()), r.right_bottom());
++        if edge_cue(ui, right, "›", tl!("Scroll ribbon right"), t) {
++            next = Some(offset + step);
+         }
++    }
++    if let Some(x) = next {
++        let mut state = scroll.state;
++        state.offset.x = x.clamp(0.0, overflow.max(0.0));
++        state.store(ui.ctx(), scroll.id);
++    }
+ }
+ 
+ /// Custom groups (Customize Ribbon, #379): up to three commands as large buttons, more as small
+-- 
+2.43.0
+

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Sat, 10 Oct 2026 19:14:20 +0300
-Subject: [PATCH 1/7] Embedding hooks: web AutoSave through the host, hideable
+Subject: [PATCH 1/8] Embedding hooks: web AutoSave through the host, hideable
  title bar and ribbon
 
 - WordApp::set_autosave_target lets a host that keeps documents itself (a web
