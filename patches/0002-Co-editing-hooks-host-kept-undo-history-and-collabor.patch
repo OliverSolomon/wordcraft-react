@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Sat, 10 Oct 2026 19:48:53 +0300
-Subject: [PATCH 2/6] Co-editing hooks: host-kept undo history and
+Subject: [PATCH 2/7] Co-editing hooks: host-kept undo history and
  collaborators in the title bar
 
 - Session::external_history lets a host that keeps its own history (real-time
@@ -17,10 +17,10 @@ Subject: [PATCH 2/6] Co-editing hooks: host-kept undo history and
  3 files changed, 48 insertions(+)
 
 diff --git a/crates/engine/src/session.rs b/crates/engine/src/session.rs
-index 1f4734c..d29c14b 100644
+index 4f16aea9..0026d3a4 100644
 --- a/crates/engine/src/session.rs
 +++ b/crates/engine/src/session.rs
-@@ -419,6 +419,13 @@ pub struct Session {
+@@ -439,6 +439,13 @@ pub struct Session {
      /// `None` is WordCraft's default, US English. The front end sets it from the interface
      /// language with [`Session::set_editing_language`] (a Polish interface writes Polish).
      pub editing_lang: Option<String>,
@@ -34,7 +34,7 @@ index 1f4734c..d29c14b 100644
      /// Editing inside an equation: which one and the caret in it.
      pub math: Option<MathEdit>,
      /// Equations are typed in LaTeX rather than the linear format.
-@@ -611,6 +618,9 @@ impl Session {
+@@ -641,6 +648,9 @@ impl Session {
              keymap: crate::KeyMap::default(),
              ribbon: crate::RibbonLayout::default(),
              editing_lang: None,
@@ -43,8 +43,8 @@ index 1f4734c..d29c14b 100644
 +            external_can: (false, false),
              read_aloud: Default::default(),
              password: None,
-             column: None,
-@@ -855,9 +865,15 @@ impl Session {
+             #[cfg(not(target_arch = "wasm32"))]
+@@ -895,9 +905,15 @@ impl Session {
          self.typing_open = false;
      }
      pub fn can_undo(&self) -> bool {
@@ -60,7 +60,7 @@ index 1f4734c..d29c14b 100644
          !self.redo.is_empty()
      }
      pub fn undo_label(&self) -> Option<&str> {
-@@ -890,6 +906,10 @@ impl Session {
+@@ -930,6 +946,10 @@ impl Session {
      }
      pub fn undo(&mut self) -> bool {
          self.typing_open = false;
@@ -71,7 +71,7 @@ index 1f4734c..d29c14b 100644
          let Some(u) = self.history.pop().map(Arc::unwrap_or_clone) else { return false };
          let cur = Undo {
              label: u.label.clone(),
-@@ -909,6 +929,10 @@ impl Session {
+@@ -949,6 +969,10 @@ impl Session {
      }
      pub fn redo(&mut self) -> bool {
          self.typing_open = false;
@@ -82,7 +82,7 @@ index 1f4734c..d29c14b 100644
          let Some(u) = self.redo.pop().map(Arc::unwrap_or_clone) else { return false };
          let cur = Undo {
              label: u.label.clone(),
-@@ -1040,6 +1064,10 @@ impl Session {
+@@ -1086,6 +1110,10 @@ impl Session {
              ribbon: _,
              // A preference for new documents, like `prefs`: not part of this document.
              editing_lang: _,
@@ -94,13 +94,13 @@ index 1f4734c..d29c14b 100644
              math: _,
              math_latex: _,
 diff --git a/crates/ui-egui/src/chrome.rs b/crates/ui-egui/src/chrome.rs
-index 90f0fcc..0e4a9e3 100644
+index c057992e..c7fa7fe7 100644
 --- a/crates/ui-egui/src/chrome.rs
 +++ b/crates/ui-egui/src/chrome.rs
-@@ -262,6 +262,16 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
-                     let initials: String = app.session.user_initials().chars().take(2).collect();
-                     ui.painter().text(r.center(), Align2::CENTER_CENTER, initials, semibold(10.5), t.on_accent);
-                     resp.on_hover_text(format!("{} — set your name in File › Options", app.session.author));
+@@ -292,6 +292,16 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
+                     if resp.on_hover_text(format!("{} — set your name in File › Options", app.session.author)).clicked() {
+                         let _ = app.run("ui.backstage", json!({"value": true, "page": "options", "pane": "general"}));
+                     }
 +                    // People editing at the same time, as in Word's co-authoring.
 +                    for c in app.collaborators.iter().take(6) {
 +                        let (r, resp) = ui.allocate_exact_size(vec2(24.0, 26.0), Sense::hover());
@@ -115,10 +115,10 @@ index 90f0fcc..0e4a9e3 100644
                      if app.ui.show_discord {
                          let (r, resp) = ui.allocate_exact_size(vec2(84.0, 22.0), Sense::click());
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index f965331..e70c1ea 100644
+index 738ed379..4c8c60e4 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
-@@ -346,6 +346,13 @@ fn migrate_units(v: &mut Value) {
+@@ -422,6 +422,13 @@ fn migrate_units(v: &mut Value) {
      }
  }
  
@@ -132,8 +132,8 @@ index f965331..e70c1ea 100644
  /// The application.
  pub struct WordApp {
      pub session: Session,
-@@ -411,6 +418,8 @@ pub struct WordApp {
-     sent_title: String,
+@@ -509,6 +516,8 @@ pub struct WordApp {
+     escape_free: bool,
      pub quit_requested: bool,
      pub autosave: bool,
 +    /// Other people editing now (real-time co-editing), shown beside the account avatar.
@@ -141,8 +141,8 @@ index f965331..e70c1ea 100644
      pub word_count: (u64, usize),
      last_autosave: f64,
      /// The tab shown before the Equation tab came up (restored when editing ends).
-@@ -507,6 +516,7 @@ impl WordApp {
-             sent_title: String::new(),
+@@ -624,6 +633,7 @@ impl WordApp {
+             escape_free: false,
              quit_requested: false,
              autosave: true,
 +            collaborators: Vec::new(),

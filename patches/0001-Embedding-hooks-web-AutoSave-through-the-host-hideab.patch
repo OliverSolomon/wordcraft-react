@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Sat, 10 Oct 2026 19:14:20 +0300
-Subject: [PATCH 1/6] Embedding hooks: web AutoSave through the host, hideable
+Subject: [PATCH 1/7] Embedding hooks: web AutoSave through the host, hideable
  title bar and ribbon
 
 - WordApp::set_autosave_target lets a host that keeps documents itself (a web
@@ -10,14 +10,14 @@ Subject: [PATCH 1/6] Embedding hooks: web AutoSave through the host, hideable
 - UiState::hide_title_bar and hide_ribbon hide the title bar and the whole
   ribbon (Word's Auto-hide Ribbon) for pages that embed WordCraft.
 ---
- crates/ui-egui/src/lib.rs | 40 ++++++++++++++++++++++++++++++++++-----
- 1 file changed, 35 insertions(+), 5 deletions(-)
+ crates/ui-egui/src/lib.rs | 48 +++++++++++++++++++++++++++++++++------
+ 1 file changed, 41 insertions(+), 7 deletions(-)
 
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index a4afbd9..f965331 100644
+index 662516fb..738ed379 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
-@@ -196,6 +196,10 @@ pub struct UiState {
+@@ -263,6 +263,10 @@ pub struct UiState {
      pub window: Option<window_geometry::WindowGeometry>,
      /// Interface language: `auto` (follow the system) or a code from [`i18n::LANGUAGES`].
      pub language: String,
@@ -28,7 +28,7 @@ index a4afbd9..f965331 100644
      /// Editing preferences; the session owns them while running (see [`WordApp::prefs`]).
      pub editing: wordcraft_engine::Prefs,
      /// Read Aloud speed (1 = normal) and whether it skips citations and bibliographies.
-@@ -280,6 +284,8 @@ impl Default for UiState {
+@@ -355,6 +359,8 @@ impl Default for UiState {
              author: String::new(),
              window: None,
              language: i18n::AUTO.into(),
@@ -37,24 +37,24 @@ index a4afbd9..f965331 100644
              editing: wordcraft_engine::Prefs::default(),
              read_aloud_rate: 1.0,
              read_aloud_skip_citations: true,
-@@ -426,6 +432,8 @@ pub struct WordApp {
-     /// there. A file that was merely opened isn't rewritten until the user saves it: saving drops
-     /// whatever WordCraft can't represent (content controls, charts, macros…).
-     autosave_path: Option<std::path::PathBuf>,
+@@ -528,6 +534,8 @@ pub struct WordApp {
+     saves_in_flight: Vec<SaveInFlight>,
+     /// Web: the command a Save Changes prompt held back until its picker save ends (#1315).
+     awaiting_save: Option<AwaitingSave>,
 +    /// The host keeps documents itself (an embedding web page), so AutoSave may run on the web.
 +    host_saves: bool,
      /// The file dialog the host is showing, and what its answer is for ([`file_dialogs`]).
      file_dialog: Option<file_dialogs::PendingDialog>,
      /// The built-in file browser, when it is open, and the folder it showed last (#576).
-@@ -510,6 +518,7 @@ impl WordApp {
-             read_aloud_at: None,
-             read_aloud_error: None,
+@@ -629,6 +637,7 @@ impl WordApp {
              autosave_path: None,
+             saves_in_flight: Vec::new(),
+             awaiting_save: None,
 +            host_saves: false,
              change_picture_target: None,
              recipient_list_pending: false,
              font_generation: wordcraft_fonts::FontDb::global().generation(),
-@@ -1429,11 +1438,21 @@ impl WordApp {
+@@ -1906,11 +1915,21 @@ impl WordApp {
          self.session.path.is_some() && self.session.path == self.autosave_path
      }
  
@@ -78,7 +78,7 @@ index a4afbd9..f965331 100644
              return Some(AutoSaveBlock::Browser);
          }
          let Some(path) = &self.session.path else { return Some(AutoSaveBlock::Unsaved) };
-@@ -1470,7 +1489,14 @@ impl WordApp {
+@@ -1947,7 +1966,14 @@ impl WordApp {
      fn autosave_tick(&mut self, now: f64) {
          if self.autosaves() && self.session.dirty && now - self.last_autosave > 2500.0 && now - self.canvas.caret_visible_since > 1500.0 {
              self.last_autosave = now;
@@ -94,10 +94,10 @@ index a4afbd9..f965331 100644
                  log::warn!("AutoSave failed: {e}");
                  self.autosave_path = None;
                  self.status(i18n::fmt(tl!("AutoSave failed: {error}. Save the document to turn AutoSave back on."), &[("error", &e.to_string())]));
-@@ -1517,8 +1543,12 @@ impl WordApp {
-         if self.ui.backstage {
+@@ -2005,14 +2031,22 @@ impl WordApp {
              backstage::show(self, ui);
-         } else {
+         } else if !self.has_document() {
+             // No document open (#1129): the ribbon greyed out but for Help, and no page.
 -            chrome::title_bar(self, ui);
 -            ribbon::show(self, ui);
 +            if !self.ui.hide_title_bar {
@@ -107,8 +107,20 @@ index a4afbd9..f965331 100644
 +                ribbon::show(self, ui);
 +            }
              chrome::status_bar(self, ui);
-             panes::show(self, ui);
-             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
+             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |_| {});
+         } else {
+-            chrome::title_bar(self, ui);
++            if !self.ui.hide_title_bar {
++                chrome::title_bar(self, ui);
++            }
+             if !self.session.view.focus_mode {
+-                ribbon::show(self, ui);
++                if !self.ui.hide_ribbon {
++                    ribbon::show(self, ui);
++                }
+                 chrome::status_bar(self, ui);
+                 panes::show(self, ui);
+             }
 -- 
 2.43.0
 

@@ -623,11 +623,13 @@ async function insertNative(editor: WordcraftEditor, b: Block, ctx: InsertContex
 export const DIAGRAM_TITLE = 'mermaid:';
 
 /**
- * `insert.picture` and `insert.chart` leave the new object selected; Right collapses the selection
- * to its end, so the next Enter doesn't replace the object.
+ * After inserting a picture or chart, put the caret after it (so the next Enter doesn't replace
+ * it). Charts are left selected; pictures already leave the caret after them (WordCraft #965).
  */
 export function collapse(editor: WordcraftEditor): void {
-  editor.execute('caret.right');
+  const c = editor.caret();
+  const a = c?.anchor, f = c?.focus;
+  if (a && f && (a.offset !== f.offset || a.path.join() !== f.path.join())) editor.execute('caret.right');
 }
 
 /** Alt text for a chart: its kind, title and what it plots. */

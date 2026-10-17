@@ -5,21 +5,21 @@ Subject: [PATCH 7/7] Design: custom theme colours; Insert: first-page and
  even-page headers and footers
 
 ---
- .prepared                       |  1 +
- crates/engine/src/cmd/design.rs | 69 +++++++++++++++++++++++++---
- crates/engine/src/cmd/insert.rs | 80 +++++++++++++++++++++++++++++----
- 3 files changed, 135 insertions(+), 15 deletions(-)
+ .prepared                       |   1 +
+ crates/engine/src/cmd/design.rs |  69 ++++++++++++++++++++--
+ crates/engine/src/cmd/insert.rs | 101 +++++++++++++++++++++++++++++---
+ 3 files changed, 156 insertions(+), 15 deletions(-)
  create mode 100644 .prepared
 
 diff --git a/.prepared b/.prepared
 new file mode 100644
-index 0000000..4161c20
+index 00000000..4161c209
 --- /dev/null
 +++ b/.prepared
 @@ -0,0 +1 @@
 +159b84f54c74e9e82fb3109b758ae7dd6f4e3ab0 159b84f54c74e9e82fb3109b758ae7dd6f4e3ab0 59ab26d50903cee9
 diff --git a/crates/engine/src/cmd/design.rs b/crates/engine/src/cmd/design.rs
-index 7d96fe8..1e92cb5 100644
+index d1fedc16..558dab63 100644
 --- a/crates/engine/src/cmd/design.rs
 +++ b/crates/engine/src/cmd/design.rs
 @@ -57,12 +57,9 @@ pub fn specs() -> Vec<CommandSpec> {
@@ -38,7 +38,7 @@ index 7d96fe8..1e92cb5 100644
          CommandSpec::new("design.styleSet", "Style Set", "Design › Document Formatting", style_set)
              .params(r#"{"name": "default|basic|lines|shaded|casual|centered|minimalist|title"}"#),
          CommandSpec::new("design.paragraphSpacing", "Paragraph Spacing", "Design › Document Formatting", para_spacing)
-@@ -89,6 +86,43 @@ pub fn specs() -> Vec<CommandSpec> {
+@@ -90,6 +87,43 @@ pub fn specs() -> Vec<CommandSpec> {
      ]
  }
  
@@ -82,7 +82,7 @@ index 7d96fe8..1e92cb5 100644
  fn set_fonts(s: &mut Session, heading: &str, body: &str) {
      s.doc.settings.major_font = heading.into();
      s.doc.settings.minor_font = body.into();
-@@ -236,3 +270,26 @@ fn page_borders(s: &mut Session, v: &Value) -> CmdResult {
+@@ -237,3 +271,26 @@ fn page_borders(s: &mut Session, v: &Value) -> CmdResult {
      }
      sel_result(s)
  }
@@ -110,25 +110,30 @@ index 7d96fe8..1e92cb5 100644
 +    }
 +}
 diff --git a/crates/engine/src/cmd/insert.rs b/crates/engine/src/cmd/insert.rs
-index 1bc36b0..1c31311 100644
+index 2b453df4..3d4c0fdd 100644
 --- a/crates/engine/src/cmd/insert.rs
 +++ b/crates/engine/src/cmd/insert.rs
-@@ -47,8 +47,12 @@ pub fn specs() -> Vec<CommandSpec> {
-         CommandSpec::new("insert.header", "Header", "Insert › Header & Footer", |s, v| header_footer(s, v, true)).params(r#"{"text"?: string, "preset"?: "blank|blankThree|title"}"#),
-         CommandSpec::new("insert.footer", "Footer", "Insert › Header & Footer", |s, v| header_footer(s, v, false)).params(r#"{"text"?: string, "preset"?: "blank|blankThree|pageNumber"}"#),
-         CommandSpec::new("insert.pageNumber", "Page Number", "Insert › Header & Footer", page_number).params(r#"{"position"?: "top|bottom|current", "align"?: "left|center|right", "format"?: "x of y"}"#),
--        CommandSpec::new("insert.editHeader", "Edit Header", "Insert › Header & Footer › Header", |s, _| edit_hf(s, true)).pure(),
--        CommandSpec::new("insert.editFooter", "Edit Footer", "Insert › Header & Footer › Footer", |s, _| edit_hf(s, false)).pure(),
-+        CommandSpec::new("insert.editHeader", "Edit Header", "Insert › Header & Footer › Header", |s, v| edit_hf(s, true, v))
-+            .params(r#"{"kind"?: "default|first|even"} (first: the first page's header, turning on Different First Page; even: even pages', turning on Different Odd & Even Pages)"#)
-+            .pure(),
-+        CommandSpec::new("insert.editFooter", "Edit Footer", "Insert › Header & Footer › Footer", |s, v| edit_hf(s, false, v))
-+            .params(r#"{"kind"?: "default|first|even"}"#)
-+            .pure(),
+@@ -55,15 +55,15 @@ pub fn specs() -> Vec<CommandSpec> {
+         // is made by the mutating `insert.createHeader`/`insert.createFooter` (undoable, refused in
+         // a protected document).
+         CommandSpec::new("insert.editHeader", "Edit Header", "Insert › Header & Footer › Header", |s, v| edit_hf(s, v, true))
+-            .params(r#"{"page"?: number (0-based: the header that page shows, created if it has none)}"#)
++            .params(r#"{"page"?: number (0-based: the header that page shows, created if it has none), "kind"?: "default|first|even" (the caret section's first-page or even-page header, turning on Different First Page or Different Odd & Even Pages)}"#)
+             .pure(),
+         CommandSpec::new("insert.editFooter", "Edit Footer", "Insert › Header & Footer › Footer", |s, v| edit_hf(s, v, false))
+-            .params(r#"{"page"?: number (0-based: the footer that page shows, created if it has none)}"#)
++            .params(r#"{"page"?: number (0-based: the footer that page shows, created if it has none), "kind"?: "default|first|even"}"#)
+             .pure(),
+         CommandSpec::new("insert.createHeader", "Header", "Insert › Header & Footer", |s, v| create_hf(s, v, true))
+-            .params(r#"{"page"?: number (0-based; default: the caret's section)} — the header that page shows, created if it has none, with the caret in it"#),
++            .params(r#"{"page"?: number (0-based; default: the caret's section), "kind"?: "default|first|even"} — the header that page shows (or the caret section's first-page or even-page one), created if it has none, with the caret in it"#),
+         CommandSpec::new("insert.createFooter", "Footer", "Insert › Header & Footer", |s, v| create_hf(s, v, false))
+-            .params(r#"{"page"?: number (0-based; default: the caret's section)} — the footer that page shows, created if it has none, with the caret in it"#),
++            .params(r#"{"page"?: number (0-based; default: the caret's section), "kind"?: "default|first|even"} — the footer that page shows (or the caret section's first-page or even-page one), created if it has none, with the caret in it"#),
          CommandSpec::new("insert.closeHeader", "Close Header and Footer", "Header & Footer", |s, _| {
-             s.sel = Selection::caret(s.doc.start_of(StoryRef::Body));
-             sel_result(s)
-@@ -394,19 +398,54 @@ fn bookmark(s: &mut Session, v: &Value) -> CmdResult {
+             if !new_empty_headers(s).is_empty() {
+                 // Its own undo step; a protected document keeps it, and the caret still leaves.
+@@ -538,19 +538,54 @@ fn bookmark(s: &mut Session, v: &Value) -> CmdResult {
  }
  
  fn hf_part(s: &mut Session, header: bool) -> u32 {
@@ -188,18 +193,46 @@ index 1bc36b0..1c31311 100644
      }
      id
  }
-@@ -445,8 +484,8 @@ fn header_footer(s: &mut Session, v: &Value, header: bool) -> CmdResult {
-     Ok(json!({"story": id}))
+@@ -590,6 +625,21 @@ fn header_footer(s: &mut Session, v: &Value, header: bool) -> CmdResult {
  }
  
--fn edit_hf(s: &mut Session, header: bool) -> CmdResult {
--    let id = hf_part(s, header);
-+fn edit_hf(s: &mut Session, header: bool, v: &Value) -> CmdResult {
-+    let id = hf_part_kind(s, header, HfKind::parse(v)?);
-     s.touch();
-     s.sel = Selection::caret(s.doc.end_of(StoryRef::Part(id)));
-     Ok(json!({"story": id}))
-@@ -684,3 +723,26 @@ mod tests {
+ fn edit_hf(s: &mut Session, v: &Value, header: bool) -> CmdResult {
++    // A first-page or even-page header of the caret's section: go to it, or have the mutating
++    // command make it (and turn on Different First Page or Different Odd & Even Pages).
++    let kind = HfKind::parse(v)?;
++    if kind != HfKind::Default {
++        let block = s.sel.focus.path.0.first().copied().unwrap_or(0) as usize;
++        let set = s.doc.sections().into_iter().find(|(end, _)| block <= *end).or_else(|| s.doc.sections().pop()).map(|(_, sp)| if header { sp.headers } else { sp.footers });
++        let existing = set.and_then(|set| if kind == HfKind::First { set.first } else { set.even }).filter(|id| s.doc.parts.contains_key(id));
++        let Some(id) = existing else {
++            let cmd = if header { "insert.createHeader" } else { "insert.createFooter" };
++            return s.run(cmd, v);
++        };
++        s.touch();
++        s.sel = Selection::caret(s.doc.end_of(StoryRef::Part(id)));
++        return Ok(json!({"story": id}));
++    }
+     let page = p::u64(v, "page").map(|page| usize::try_from(page).unwrap_or(usize::MAX));
+     let shown = match page {
+         Some(page) => shown_hf(s, page, header)?,
+@@ -628,6 +678,16 @@ fn shown_hf(s: &mut Session, page: usize, header: bool) -> Result<Option<u32>, C
+ }
+ 
+ fn create_hf(s: &mut Session, v: &Value, header: bool) -> CmdResult {
++    let kind = HfKind::parse(v)?;
++    if kind != HfKind::Default {
++        let before = s.doc.parts.len();
++        let id = hf_part_kind(s, header, kind);
++        if s.doc.parts.len() > before {
++            s.new_header_parts.push(id);
++        }
++        s.sel = Selection::caret(s.doc.end_of(StoryRef::Part(id)));
++        return Ok(json!({"story": id}));
++    }
+     let id = match p::u64(v, "page") {
+         Some(page) => {
+             let page = usize::try_from(page).unwrap_or(usize::MAX);
+@@ -1141,3 +1201,26 @@ mod tests {
          assert_eq!(date_picture("DATE"), None);
      }
  }

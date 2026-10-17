@@ -24,3 +24,7 @@ opt-level = 3
 lto = "thin"
 codegen-units = 16
 debug = 0
+
+# Upstream WordCraft's [patch.crates-io], copied by scripts/sync-upstream.py.
+[patch.crates-io]
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "c3487320b2d1de657b860b3c8abb44e1f2b32bd8" }
