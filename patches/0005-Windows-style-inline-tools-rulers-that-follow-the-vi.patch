@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 5e3513ab8c9afb518d1906bcff01abb2450ab9bf Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Sun, 11 Oct 2026 13:07:39 +0300
 Subject: [PATCH 5/8] Windows-style inline tools, rulers that follow the view,
@@ -31,7 +31,7 @@ Content-Transfer-Encoding: 8bit
  9 files changed, 158 insertions(+), 37 deletions(-)
 
 diff --git a/crates/ui-egui/src/backstage.rs b/crates/ui-egui/src/backstage.rs
-index b89665ad..f98483fe 100644
+index b89665a..f98483f 100644
 --- a/crates/ui-egui/src/backstage.rs
 +++ b/crates/ui-egui/src/backstage.rs
 @@ -445,6 +445,16 @@ fn info_page(app: &mut WordApp, ui: &mut Ui) {
@@ -52,7 +52,7 @@ index b89665ad..f98483fe 100644
          ui.label(egui::RichText::new(tl!("Statistics")).font(semibold(15.0)));
          for (l, k) in [("Pages", "pages"), ("Words", "words"), ("Paragraphs", "paragraphs"), ("Sections", "sections"), ("Comments", "comments")] {
 diff --git a/crates/ui-egui/src/canvas.rs b/crates/ui-egui/src/canvas.rs
-index 4eca0d30..61ac0dda 100644
+index 4eca0d3..61ac0dd 100644
 --- a/crates/ui-egui/src/canvas.rs
 +++ b/crates/ui-egui/src/canvas.rs
 @@ -1577,7 +1577,13 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
@@ -126,7 +126,7 @@ index 4eca0d30..61ac0dda 100644
      use crate::table_resize::tests::{H, cell, screen, steps, table_window};
  
 diff --git a/crates/ui-egui/src/chrome.rs b/crates/ui-egui/src/chrome.rs
-index c7fa7fe7..edfa92ed 100644
+index c7fa7fe..edfa92e 100644
 --- a/crates/ui-egui/src/chrome.rs
 +++ b/crates/ui-egui/src/chrome.rs
 @@ -289,7 +289,7 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
@@ -176,7 +176,7 @@ index c7fa7fe7..edfa92ed 100644
  
                  paint_text(
 diff --git a/crates/ui-egui/src/credits.rs b/crates/ui-egui/src/credits.rs
-index f571b33b..666e54f0 100644
+index f571b33..666e54f 100644
 --- a/crates/ui-egui/src/credits.rs
 +++ b/crates/ui-egui/src/credits.rs
 @@ -193,7 +193,7 @@ fn signed(n: i128) -> String {
@@ -197,7 +197,7 @@ index f571b33b..666e54f0 100644
      }
  }
 diff --git a/crates/ui-egui/src/dialogs.rs b/crates/ui-egui/src/dialogs.rs
-index c636f4cd..086b22f8 100644
+index c636f4c..086b22f 100644
 --- a/crates/ui-egui/src/dialogs.rs
 +++ b/crates/ui-egui/src/dialogs.rs
 @@ -2308,7 +2308,7 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
@@ -239,7 +239,7 @@ index c636f4cd..086b22f8 100644
              h.state_mut().ui.language = language.into();
              h.state_mut().dialog = Some(Dialog::Commands { query: query.into(), swallow: false });
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index cbbef541..1c480c41 100644
+index cbbef54..1c480c4 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
 @@ -536,6 +536,13 @@ pub struct WordApp {
@@ -313,7 +313,7 @@ index cbbef541..1c480c41 100644
          self.escape_free = self.dialog.is_none() && !self.ui.backstage && self.ui.keytips == keytips::Phase::Off && !egui::Popup::is_any_open(&ctx);
          // Keytips are read before layout so the frame paints the new state; badges paint after
 diff --git a/crates/ui-egui/src/mini_toolbar.rs b/crates/ui-egui/src/mini_toolbar.rs
-index ea85eda7..a87fe8e4 100644
+index ea85eda..a87fe8e 100644
 --- a/crates/ui-egui/src/mini_toolbar.rs
 +++ b/crates/ui-egui/src/mini_toolbar.rs
 @@ -31,9 +31,10 @@ const SEP_W: f32 = 9.0;
@@ -386,7 +386,7 @@ index ea85eda7..a87fe8e4 100644
  }
  
 diff --git a/crates/ui-egui/src/previews.rs b/crates/ui-egui/src/previews.rs
-index 08ef7cb4..56b51125 100644
+index 08ef7cb..56b5112 100644
 --- a/crates/ui-egui/src/previews.rs
 +++ b/crates/ui-egui/src/previews.rs
 @@ -12,6 +12,9 @@ use wordcraft_doc::{Block, Document, Paragraph, Table, para_block};
@@ -414,7 +414,7 @@ index 08ef7cb4..56b51125 100644
              let (r, resp) = ui.allocate_exact_size(vec2(260.0, crate::widgets::COMBO_PREVIEW_ROW_H), Sense::click());
              let t = Tokens::get(ui.ctx());
 diff --git a/crates/ui-egui/src/ribbon.rs b/crates/ui-egui/src/ribbon.rs
-index 59ff90f1..32f20221 100644
+index 59ff90f..32f2022 100644
 --- a/crates/ui-egui/src/ribbon.rs
 +++ b/crates/ui-egui/src/ribbon.rs
 @@ -261,7 +261,17 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
@@ -460,6 +460,3 @@ index 59ff90f1..32f20221 100644
          let outside = ui.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| !area.response.rect.contains(p)));
          if outside || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
              app.ribbon_peek = false;
--- 
-2.43.0
-

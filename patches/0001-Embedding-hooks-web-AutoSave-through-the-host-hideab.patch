@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 8dace07492158463187ed9cc84c2ebac011ac31e Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Sat, 10 Oct 2026 19:14:20 +0300
 Subject: [PATCH 1/8] Embedding hooks: web AutoSave through the host, hideable
@@ -14,7 +14,7 @@ Subject: [PATCH 1/8] Embedding hooks: web AutoSave through the host, hideable
  1 file changed, 41 insertions(+), 7 deletions(-)
 
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index 662516fb..738ed379 100644
+index 662516f..738ed37 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
 @@ -263,6 +263,10 @@ pub struct UiState {
@@ -121,6 +121,3 @@ index 662516fb..738ed379 100644
                  chrome::status_bar(self, ui);
                  panes::show(self, ui);
              }
--- 
-2.43.0
-

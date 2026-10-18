@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From ab8fb4867017bdf770c57523acb59d8fe9d92acd Mon Sep 17 00:00:00 2001
 From: Oliver Solomon <47696354+OliverSolomon@users.noreply.github.com>
 Date: Sat, 17 Oct 2026 11:35:16 +0000
 Subject: [PATCH 8/8] Host controls: comments, Share, the File menu and
@@ -19,7 +19,7 @@ switch, the Comments button, zoom and the page-view buttons.
  6 files changed, 416 insertions(+), 173 deletions(-)
 
 diff --git a/crates/ui-egui/src/backstage.rs b/crates/ui-egui/src/backstage.rs
-index f98483fe..6c16a239 100644
+index f98483f..6c16a23 100644
 --- a/crates/ui-egui/src/backstage.rs
 +++ b/crates/ui-egui/src/backstage.rs
 @@ -70,11 +70,38 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
@@ -186,7 +186,7 @@ index f98483fe..6c16a239 100644
 +    }
 +}
 diff --git a/crates/ui-egui/src/canvas.rs b/crates/ui-egui/src/canvas.rs
-index 61ac0dda..f091ae73 100644
+index 61ac0dd..f091ae7 100644
 --- a/crates/ui-egui/src/canvas.rs
 +++ b/crates/ui-egui/src/canvas.rs
 @@ -838,7 +838,8 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
@@ -227,7 +227,7 @@ index 61ac0dda..f091ae73 100644
  }
  
 diff --git a/crates/ui-egui/src/chrome.rs b/crates/ui-egui/src/chrome.rs
-index edfa92ed..3d969c3d 100644
+index edfa92e..3d969c3 100644
 --- a/crates/ui-egui/src/chrome.rs
 +++ b/crates/ui-egui/src/chrome.rs
 @@ -293,7 +293,7 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
@@ -350,7 +350,7 @@ index edfa92ed..3d969c3d 100644
                      }
                      ui.add_space(8.0);
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index 53bfa3f1..f69ac061 100644
+index 53bfa3f..f69ac06 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
 @@ -221,6 +221,31 @@ fn paste_target(canvas_focused: bool, backstage: bool, dialog: bool) -> bool {
@@ -475,7 +475,7 @@ index 53bfa3f1..f69ac061 100644
          // brings the rest back, as in Word.
          if self.session.view.focus_mode && self.dialog.is_none() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
 diff --git a/crates/ui-egui/src/print_page.rs b/crates/ui-egui/src/print_page.rs
-index 490b7386..917ade0a 100644
+index 490b738..917ade0 100644
 --- a/crates/ui-egui/src/print_page.rs
 +++ b/crates/ui-egui/src/print_page.rs
 @@ -323,8 +323,21 @@ pub fn export_formats(app: &mut WordApp, ui: &mut Ui) {
@@ -503,7 +503,7 @@ index 490b7386..917ade0a 100644
          ui.add_space(4.0);
      }
 diff --git a/crates/ui-egui/src/ribbon.rs b/crates/ui-egui/src/ribbon.rs
-index 32f20221..11c4deee 100644
+index 32f2022..11c4dee 100644
 --- a/crates/ui-egui/src/ribbon.rs
 +++ b/crates/ui-egui/src/ribbon.rs
 @@ -228,58 +228,72 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
@@ -771,6 +771,3 @@ index 32f20221..11c4deee 100644
  }
  
  /// Custom groups (Customize Ribbon, #379): up to three commands as large buttons, more as small
--- 
-2.43.0
-

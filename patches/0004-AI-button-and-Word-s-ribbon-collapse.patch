@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From ae13cc1cae99c5f2c3f8f75ea051c12c0cbf36e8 Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Sun, 11 Oct 2026 08:03:35 +0300
 Subject: [PATCH 4/8] AI button and Word's ribbon collapse
@@ -15,7 +15,7 @@ Subject: [PATCH 4/8] AI button and Word's ribbon collapse
  3 files changed, 147 insertions(+), 74 deletions(-)
 
 diff --git a/crates/ui-egui/src/icons.rs b/crates/ui-egui/src/icons.rs
-index 5bf4dbe4..9b8cd029 100644
+index 5bf4dbe..9b8cd02 100644
 --- a/crates/ui-egui/src/icons.rs
 +++ b/crates/ui-egui/src/icons.rs
 @@ -1229,6 +1229,17 @@ pub fn paint(p: &Painter, r: Rect, name: &str, c: Color32, accent: Color32) {
@@ -37,7 +37,7 @@ index 5bf4dbe4..9b8cd029 100644
              pen.line(&[(10.0, 4.0), (10.0, 16.0)]);
              pen.line(&[(4.0, 10.0), (16.0, 10.0)]);
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index def55a49..cbbef541 100644
+index def55a4..cbbef54 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
 @@ -530,6 +530,12 @@ pub struct WordApp {
@@ -64,7 +64,7 @@ index def55a49..cbbef541 100644
              last_autosave: 0.0,
              equation_prev_tab: None,
 diff --git a/crates/ui-egui/src/ribbon.rs b/crates/ui-egui/src/ribbon.rs
-index 97c7ee33..59ff90f1 100644
+index 97c7ee3..59ff90f 100644
 --- a/crates/ui-egui/src/ribbon.rs
 +++ b/crates/ui-egui/src/ribbon.rs
 @@ -215,7 +215,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
@@ -303,6 +303,3 @@ index 97c7ee33..59ff90f1 100644
  }
  
  /// Custom groups (Customize Ribbon, #379): up to three commands as large buttons, more as small
--- 
-2.43.0
-

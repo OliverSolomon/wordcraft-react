@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 3685ea66d98af9d1e72bcae08c136408d50e3819 Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Mon, 12 Oct 2026 08:06:33 +0300
 Subject: [PATCH 6/8] Embedding hook: a hideable status bar
@@ -9,7 +9,7 @@ A host that draws its own phone interface can hide the status bar with the hideS
  1 file changed, 9 insertions(+), 2 deletions(-)
 
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index 1c480c41..53bfa3f1 100644
+index 1c480c4..53bfa3f 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
 @@ -267,6 +267,8 @@ pub struct UiState {
@@ -51,6 +51,3 @@ index 1c480c41..53bfa3f1 100644
                  panes::show(self, ui);
              }
              egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
--- 
-2.43.0
-

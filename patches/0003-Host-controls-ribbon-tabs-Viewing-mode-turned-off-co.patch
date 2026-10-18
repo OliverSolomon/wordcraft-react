@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 4f4deb7ca9007c20ff4e08e96531c6da64fe7cc6 Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Sun, 11 Oct 2026 06:53:25 +0300
 Subject: [PATCH 3/8] Host controls: ribbon tabs, Viewing mode, turned-off
@@ -25,7 +25,7 @@ Subject: [PATCH 3/8] Host controls: ribbon tabs, Viewing mode, turned-off
  7 files changed, 179 insertions(+), 15 deletions(-)
 
 diff --git a/crates/engine/src/session.rs b/crates/engine/src/session.rs
-index 0026d3a4..9756bebe 100644
+index 0026d3a..9756beb 100644
 --- a/crates/engine/src/session.rs
 +++ b/crates/engine/src/session.rs
 @@ -446,6 +446,10 @@ pub struct Session {
@@ -92,7 +92,7 @@ index 0026d3a4..9756bebe 100644
          let guard = if spec.mutates { crate::cmd::protect::check_before(self, id, params)? } else { false };
          if spec.mutates && self.doc.settings.protection.as_deref() == Some("trackedChanges") {
 diff --git a/crates/fonts/src/fontdb.rs b/crates/fonts/src/fontdb.rs
-index 5f072951..381f7b3a 100644
+index 5f07295..381f7b3 100644
 --- a/crates/fonts/src/fontdb.rs
 +++ b/crates/fonts/src/fontdb.rs
 @@ -1098,6 +1098,13 @@ impl FontDb {
@@ -110,7 +110,7 @@ index 5f072951..381f7b3a 100644
      }
  
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index 4c8c60e4..def55a49 100644
+index 4c8c60e..def55a4 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
 @@ -267,6 +267,10 @@ pub struct UiState {
@@ -254,7 +254,7 @@ index 4c8c60e4..def55a49 100644
              backstage::show(self, ui);
          } else if !self.has_document() {
 diff --git a/crates/ui-egui/src/panes.rs b/crates/ui-egui/src/panes.rs
-index 76d58925..484d5ece 100644
+index 76d5892..484d5ec 100644
 --- a/crates/ui-egui/src/panes.rs
 +++ b/crates/ui-egui/src/panes.rs
 @@ -362,7 +362,7 @@ fn comments(app: &mut WordApp, ui: &mut Ui) {
@@ -282,7 +282,7 @@ index 76d58925..484d5ece 100644
          }
      });
 diff --git a/crates/ui-egui/src/previews.rs b/crates/ui-egui/src/previews.rs
-index cb946848..08ef7cb4 100644
+index cb94684..08ef7cb 100644
 --- a/crates/ui-egui/src/previews.rs
 +++ b/crates/ui-egui/src/previews.rs
 @@ -153,6 +153,11 @@ impl MathAtlas {
@@ -298,7 +298,7 @@ index cb946848..08ef7cb4 100644
      /// one (宋体 for SimSun in Chinese, #505), like Word's.
      pub fn families(&mut self) -> Vec<String> {
 diff --git a/crates/ui-egui/src/ribbon.rs b/crates/ui-egui/src/ribbon.rs
-index 0dd38891..97c7ee33 100644
+index 0dd3889..97c7ee3 100644
 --- a/crates/ui-egui/src/ribbon.rs
 +++ b/crates/ui-egui/src/ribbon.rs
 @@ -197,7 +197,8 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
@@ -371,7 +371,7 @@ index 0dd38891..97c7ee33 100644
                  }
                  let size = st
 diff --git a/crates/ui-egui/src/widgets.rs b/crates/ui-egui/src/widgets.rs
-index a10495be..b790d4c4 100644
+index a10495b..b790d4c 100644
 --- a/crates/ui-egui/src/widgets.rs
 +++ b/crates/ui-egui/src/widgets.rs
 @@ -95,7 +95,8 @@ pub fn enabled(app: &WordApp, id: &str) -> bool {
@@ -432,6 +432,3 @@ index a10495be..b790d4c4 100644
              let lit = highlight == Some(k);
              let clicked = match preview {
                  Some(p) => {
--- 
-2.43.0
-

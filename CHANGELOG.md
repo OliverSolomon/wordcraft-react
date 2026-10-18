@@ -4,6 +4,10 @@ Every published version of `@gamine/wordcraft-react`, newest first. Versions fol
 
 Features marked ✦ are Extras: additions of this package that are not part of Microsoft Word or WordCraft. [docs/DIVERGENCES.md](docs/DIVERGENCES.md) lists every way the package differs from WordCraft.
 
+## 0.3.7 (2026-10-18)
+
+- **Upstream:** synced to WordCraft `f2e15cf` ([changes](https://github.com/storytold/wordcraft/compare/eae242176108d328c5dd81fbc10370c51ab90706...f2e15cf8f899a79899a2d9595ca4ce7df1e5ea22)).
+
 ## 0.3.6 (2026-10-17)
 
 - **Upstream WordCraft** moved to `eae2421` (308 commits). Highlights: a pure header and footer design with a page parameter, pictures leave the caret after them, and `krilla` comes from craft-libs. The patches were rebased; Cargo.toml now copies upstream's `[patch.crates-io]` on every sync. Upstream now opens on Home whenever preferences are applied, so `setPrefs` keeps the tab (and the File view) showing unless the change names one.

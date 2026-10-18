@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 5a8eaea49ab34454059d7b964c5fef4e9f2dd9e6 Mon Sep 17 00:00:00 2001
 From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
 Date: Sat, 10 Oct 2026 19:48:53 +0300
 Subject: [PATCH 2/8] Co-editing hooks: host-kept undo history and
@@ -17,7 +17,7 @@ Subject: [PATCH 2/8] Co-editing hooks: host-kept undo history and
  3 files changed, 48 insertions(+)
 
 diff --git a/crates/engine/src/session.rs b/crates/engine/src/session.rs
-index 4f16aea9..0026d3a4 100644
+index 4f16aea..0026d3a 100644
 --- a/crates/engine/src/session.rs
 +++ b/crates/engine/src/session.rs
 @@ -439,6 +439,13 @@ pub struct Session {
@@ -94,7 +94,7 @@ index 4f16aea9..0026d3a4 100644
              math: _,
              math_latex: _,
 diff --git a/crates/ui-egui/src/chrome.rs b/crates/ui-egui/src/chrome.rs
-index c057992e..c7fa7fe7 100644
+index c057992..c7fa7fe 100644
 --- a/crates/ui-egui/src/chrome.rs
 +++ b/crates/ui-egui/src/chrome.rs
 @@ -292,6 +292,16 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
@@ -115,7 +115,7 @@ index c057992e..c7fa7fe7 100644
                      if app.ui.show_discord {
                          let (r, resp) = ui.allocate_exact_size(vec2(84.0, 22.0), Sense::click());
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index 738ed379..4c8c60e4 100644
+index 738ed37..4c8c60e 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
 @@ -422,6 +422,13 @@ fn migrate_units(v: &mut Value) {
@@ -149,6 +149,3 @@ index 738ed379..4c8c60e4 100644
              word_count: (0, 0),
              last_autosave: 0.0,
              equation_prev_tab: None,
--- 
-2.43.0
-
