@@ -4,6 +4,17 @@ Every published version of `@gamine/wordcraft-react`, newest first. Versions fol
 
 Features marked ✦ are Extras: additions of this package that are not part of Microsoft Word or WordCraft. [docs/DIVERGENCES.md](docs/DIVERGENCES.md) lists every way the package differs from WordCraft.
 
+## 0.3.8 (2026-11-27)
+
+- **Upstream WordCraft** moved to `b322c3d` (WordCraft 0.18), 2,987 commits after 0.3.7's `f2e15cf` ([changes](https://github.com/storytold/wordcraft/compare/f2e15cf8f899a79899a2d9595ca4ce7df1e5ea22...b322c3d816890559f2a7e1768f70029c27056d6a)). Upstream rebuilt its window on the shared Craft shell, moved to egui 0.37, renamed its preferences and routed opening and saving through a host files layer. The automatic sync couldn't follow (issues #30 to #129), so this release ports the package onto it by hand.
+- **Patches:** the series is ported to the new structure and is now six patches (see [patches/README.md](patches/README.md)). The host's switches live in their own `Embed` state instead of the saved preferences, so nothing a page sets is stored in the browser.
+- **Saving:** Save, Save As, Export and AutoSave now reach `onSave` through upstream's files layer, the way its own hosted mode works; without `onSave` the browser downloads as before. Opening, the clipboard (pasted pictures included) and printing use upstream's browser support.
+- **Web fonts:** fonts the host can fetch show in upstream's new font picker as served, and picking or resting on one asks for it (`onFontRequest`). An added font joins the picker's list too.
+- **Taken from upstream now:** the ribbon's collapse to its tabs, Recently Used Fonts in the font box and going to a comment's text on a click are upstream's own, so our versions of them are gone.
+- **Dropped:** the extra mini toolbar buttons (Bullets, Numbering, New Comment), the mini toolbar above the right-click menu, rulers that follow the page in view and Page Setup on a ruler double-click. Upstream redesigned the mini toolbar and the rulers; these may come back as upstream contributions.
+- **Sync:** `scripts/sync-upstream.py` now also keeps the embed crate's craft-libs rev in step with upstream, and `scripts/prepare-upstream.sh` copes with an empty patch series.
+- **Build and CI:** the release build drops the module's names section before `wasm-bindgen` (WordCraft 0.18's module is large enough that it ran out of memory otherwise). CI now also runs the host smoke suite, whose default-chrome snapshot is kept per upstream commit, and its jobs get 150 minutes for the larger build.
+
 ## 0.3.7 (2026-10-18)
 
 - **Upstream:** synced to WordCraft `f2e15cf` ([changes](https://github.com/storytold/wordcraft/compare/eae242176108d328c5dd81fbc10370c51ab90706...f2e15cf8f899a79899a2d9595ca4ce7df1e5ea22)).
