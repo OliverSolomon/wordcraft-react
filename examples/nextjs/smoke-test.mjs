@@ -116,19 +116,29 @@ try {
   assert.ok(openRefused, 'turned-off commands are refused');
   await page.click('text=Hide Mailings, Zotero, Open');
 
-  // Font previews: opening the font box fetches the regular face of the web fonts on screen, so
-  // each name is drawn in its own font.
+  // Web fonts in the font box: the box lists the fonts the app can fetch, and picking one there
+  // (typing its name, as a person can) loads it. The box is found by its accessible name, so the
+  // ribbon's layout doesn't matter.
   if (process.env.SMOKE_FONTS !== '0') {
     await page.evaluate(() => {
       window.scrollTo(0, 0);
       window.wordcraft.setPrefs({ tab: 'Home' });
+      window.wordcraft.execute('select.text', { text: 'Painters' });
     });
-    await page.waitForTimeout(500);
-    await page.mouse.move(302, 217);
-    await page.waitForTimeout(200);
-    await page.mouse.click(302, 217);
-    await page.waitForFunction(() => window.wordcraft.hasFont('ABeeZee') || window.wordcraft.hasFont('Abel'), null, { timeout: 30_000 });
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(800);
+    const box = await page.evaluate(() => {
+      // eframe mirrors the interface's accessibility tree into the DOM; the font field is named "Font".
+      const el = [...document.querySelectorAll('[aria-label="Font"], [role=combobox]')].find((e) => /font/i.test(e.getAttribute('aria-label') ?? ''));
+      const r = el?.getBoundingClientRect();
+      return r && r.width > 0 ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null;
+    });
+    await page.mouse.click(box?.x ?? 240, box?.y ?? 207);
+    await page.waitForTimeout(300);
+    await page.keyboard.press('Control+A');
+    await page.keyboard.type('Abel');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.wordcraft.hasFont('Abel'), null, { timeout: 30_000 });
+    await page.waitForTimeout(800);
     await page.screenshot({ path: 'smoke-font-previews.png' });
     await page.keyboard.press('Escape');
     await page.mouse.click(700, 600);
@@ -219,11 +229,11 @@ try {
     await page.selectOption('select[aria-label="AI"]', 'app');
   }
 
-  // Word's ribbon collapse: ^ leaves the tabs and ruler; a tab click opens it over the page.
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.mouse.move(1365, 279);
-  await page.waitForTimeout(300);
-  await page.mouse.click(1365, 279);
+  // The ribbon's collapse to its tabs (upstream's own control; its command is the one write path).
+  await page.evaluate(() => {
+    window.scrollTo(0, 0);
+    window.wordcraft.execute('ui.collapseRibbon');
+  });
   await page.waitForFunction(() => window.wordcraft.getPrefs().ribbonCollapsed === true, null, { timeout: 5_000 });
   await page.waitForTimeout(500);
   await page.screenshot({ path: 'smoke-collapsed.png' });

@@ -24,6 +24,8 @@ scripts/prepare-upstream.sh
 cargo build --locked --profile "$PROFILE" --target wasm32-unknown-unknown -p wordcraft-embed
 dir=$([ "$PROFILE" = dev ] && echo debug || echo release)
 rm -rf "$OUT" && mkdir -p "$OUT"
+# The names section only serves stack traces; without it wasm-bindgen fits in a small machine's memory.
+[ "$PROFILE" = dev ] || python3 "$ROOT/scripts/strip-wasm-names.py" "$ROOT/target/wasm32-unknown-unknown/$dir/wordcraft_embed.wasm"
 wasm-bindgen --target web --weak-refs --out-dir "$OUT" --out-name wordcraft_embed \
   "$ROOT/target/wasm32-unknown-unknown/$dir/wordcraft_embed.wasm"
 

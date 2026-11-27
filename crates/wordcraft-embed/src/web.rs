@@ -5,21 +5,32 @@
 //! returned, so a callback may call straight back into the handle.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
+use craft::host::{FileError, Files, Host, PendingPick, PickId, PickRequest, Picked, Wake, WriteIntent};
+use craft::platform::appearance::SystemReader;
+use craft::platform::browser_files::BrowserFiles;
+use craft::platform::clipboard::{Clipboard, ClipboardError, EventClipboard, Flavor, LateOffers, TEXT};
+use craft::platform::open::{DroppedFile, FileIntake, IntakeSender};
+use craft::print::spool::Spool;
+use craft::ui::InstallSpec;
+use craft::ui::shell::embed;
+use craft::window::system::NoWindows;
 use serde_json::{Value, json};
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::*;
 use wordcraft_engine::Session;
-use wordcraft_ui_egui::{Inbox, Services, UiState, WordApp};
+use wordcraft_ui_egui::embed::Embed;
+use wordcraft_ui_egui::prefs::Prefs;
+use wordcraft_ui_egui::{Services, WordApp};
 
 use crate::collab::{CollabState, Peer, parse_color};
 use crate::doc_tools::{Mark, body_offset, comments_json, marks_at, paragraphs_json, parse_marks, pos_at, selected_object};
 use crate::touch_web::TouchState;
 use crate::{MountOptions, autosave_name, document_fonts, merge_json, mime_for};
-
-const DOC_EXTS: &[&str] = &["docx", "docm", "dotx", "dotm", "doc", "dot", "odt", "rtf", "txt", "md", "html", "htm", "tex", "json"];
-const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 
 type UnloadListener = Closure<dyn FnMut(web_sys::BeforeUnloadEvent)>;
 
@@ -27,7 +38,10 @@ type UnloadListener = Closure<dyn FnMut(web_sys::BeforeUnloadEvent)>;
 struct Shared {
     app: RefCell<Option<WordApp>>,
     ctx: RefCell<Option<egui::Context>>,
-    inbox: Inbox,
+    /// Dropped files, read asynchronously, go to the app through this.
+    intake: RefCell<Option<IntakeSender>>,
+    /// This editor's key in [`EDITORS`], for its files layer.
+    key: u64,
     on_change: RefCell<Option<js_sys::Function>>,
     on_save: RefCell<Option<js_sys::Function>>,
     last_rev: Cell<u64>,
@@ -66,6 +80,13 @@ impl Shared {
     }
 }
 
+thread_local! {
+    /// The mounted editors by key, for their files layer: `Files` must be `Send + Sync`, which the
+    /// editor's shared state is not. The browser runs everything on one thread.
+    static EDITORS: RefCell<HashMap<u64, std::rc::Weak<Shared>>> = RefCell::new(HashMap::new());
+    static NEXT_KEY: Cell<u64> = const { Cell::new(1) };
+}
+
 fn err(e: impl std::fmt::Display) -> JsValue {
     js_sys::Error::new(&e.to_string()).into()
 }
@@ -85,10 +106,16 @@ pub async fn mount(
     initial_bytes: Option<Vec<u8>>,
 ) -> Result<WordcraftHandle, JsValue> {
     let opts = MountOptions::parse(options.as_deref().unwrap_or("{}"));
+    let key = NEXT_KEY.with(|k| {
+        let key = k.get();
+        k.set(key + 1);
+        key
+    });
     let shared = Rc::new(Shared {
         app: RefCell::new(None),
         ctx: RefCell::new(None),
-        inbox: Inbox::default(),
+        intake: RefCell::new(None),
+        key,
         on_change: RefCell::new(None),
         on_save: RefCell::new(None),
         last_rev: Cell::new(0),
@@ -133,6 +160,7 @@ pub async fn mount(
         None
     };
 
+    EDITORS.with(|e| e.borrow_mut().insert(key, Rc::downgrade(&shared)));
     let runner = eframe::WebRunner::new();
     let creator_shared = shared.clone();
     runner
@@ -143,19 +171,63 @@ pub async fn mount(
                 if let Some(rs) = &cc.wgpu_render_state {
                     log::info!("wordcraft-embed: wgpu backend {:?}", rs.adapter.get_info().backend);
                 }
-                let doc = if opts.sample { wordcraft_engine::sample::sample_document() } else { wordcraft_doc::Document::new() };
-                let mut app = WordApp::new(Session::new(doc), services(&creator_shared, cc.egui_ctx.clone(), guard.clone()));
+                let ctx = cc.egui_ctx.clone();
+                // The clipboard: the browser's paste event feeds it; a pasted picture (read
+                // asynchronously) arrives as a late offer. As upstream's web app.
+                let frame_ctx = ctx.clone();
+                let copy_ctx = ctx.clone();
+                let event_clipboard =
+                    EventClipboard::new(move || frame_ctx.cumulative_frame_nr(), move |flavors| copy_out(&copy_ctx, flavors)).with_wake(waker(&ctx));
+                if let Err(e) = listen_for_pasted_pictures(event_clipboard.late_offers()) {
+                    log::error!("pasting pictures is unavailable: {e}");
+                }
+                let region = wordcraft_ui_egui::i18n::system_region();
+                let lang = wordcraft_ui_egui::i18n::Lang::from_pref(&Prefs::default().language);
+                let spec = InstallSpec::new(craft::host::target::ShellInfo::current(), Arc::new(NoWindows))
+                    .app_id("wordcraft")
+                    .system(SystemReader::start(waker(&ctx)))
+                    .clipboard(Clipboard::new(event_clipboard));
+                if let Err(e) = embed::install(&ctx, spec, &wordcraft_ui_egui::ui_fonts(lang)) {
+                    log::error!("wordcraft-embed: the UI runtime did not install: {e:?}");
+                }
+                // The font box lists the picker catalog's fonts. Upstream starts its first scan on a
+                // thread, which a browser can't spawn, so the box would say "Loading fonts…" for
+                // good: the bundled faces join it here and the scan runs now (there are no font
+                // folders to read in a browser, so it is quick).
+                let catalog = craft::font_manager::Catalog::global();
+                for bytes in wordcraft_fonts::bundled() {
+                    if let Err(e) = catalog.add_bytes(bytes.to_vec(), craft::font_manager::Source::Bundled, &Default::default()) {
+                        log::warn!("a bundled font isn't in the font box: {e}");
+                    }
+                }
+                let _ = catalog.families();
+                // Files: the browser's pickers; saves go to the page's onSave, or download.
+                let browser = Arc::new(BrowserFiles::new(waker(&ctx)));
+                let files: Arc<dyn Files> = Arc::new(EmbedFiles::new(browser, creator_shared.key));
+                let host = Arc::new(
+                    Host::builder(wordcraft_ui_egui::APP).i18n(wordcraft_ui_egui::i18n::catalogs()).files(files).lang(lang.craft_lang()).build(),
+                );
+                let (intake, sender) = FileIntake::new(Wake::new(waker(&ctx)));
+                *creator_shared.intake.borrow_mut() = Some(sender);
+                let doc = if opts.sample { wordcraft_engine::sample::sample_document() } else { wordcraft_engine::blank_document(&region) };
+                let mut session = Session::new(doc);
+                session.system_region = region;
+                let services = Services {
+                    print: Some(Spool::new(host.jobs_shared().clone())),
+                    intake: Some(intake),
+                    on_dirty: guard.clone().map(|dirty| Box::new(move |d: bool| dirty.set(d)) as Box<dyn Fn(bool)>),
+                    ..Default::default()
+                };
+                let mut app = WordApp::new(session, services).with_host(host);
                 // AutoSave writes only through the host's onSave (never to browser storage).
                 app.autosave = opts.persist && opts.auto_save;
                 if let Some(name) = &opts.user_name {
                     app.session.author = name.clone();
                 }
-                if let Some(p) = &opts.prefs {
-                    let mut base = serde_json::to_value(app.prefs()).unwrap_or(Value::Null);
-                    merge_json(&mut base, p);
-                    if let Ok(ui) = serde_json::from_value::<UiState>(base) {
-                        app.apply_prefs(ui);
-                    }
+                if let Some(p) = &opts.prefs
+                    && let Err(e) = apply_prefs(&mut app, p)
+                {
+                    log::warn!("prefs: {e}");
                 }
                 // Open the initial document now (not on the first frame), so it is in place before
                 // anything else, such as joining a co-editing session, looks at the document.
@@ -277,7 +349,7 @@ impl Shell {
         let layout = app.session.layout();
         let c = layout.caret_on(&head, app.session.page_hint)?;
         let at = wordcraft_ui_egui::canvas::page_to_screen(app, c.page, c.x, c.top)?;
-        let area = app.canvas.canvas_rect?;
+        let area = app.canvas.canvas_rect()?;
         let band = (area.top() + area.height() / 3.0)..(area.bottom() - area.height() / 3.0);
         if band.contains(&at.y) {
             return None;
@@ -288,10 +360,10 @@ impl Shell {
 
     /// Events from WordCraft's UI meant for the page, such as the AI button being clicked.
     fn host_events(&self, app: &mut WordApp) {
-        if app.host_events.is_empty() {
+        if app.embed.host_events.is_empty() {
             return;
         }
-        let events = std::mem::take(&mut app.host_events);
+        let events = std::mem::take(&mut app.embed.host_events);
         let shared = self.shared.clone();
         defer(move || {
             let cb = shared.on_host_event.borrow().clone();
@@ -308,11 +380,11 @@ impl Shell {
     /// `cb(family, preview)`: a web font was picked (`preview` false: fetch every face), or its
     /// font-box row is on screen (`preview` true: the regular face is enough to draw its name).
     fn font_requests(&self, app: &mut WordApp) {
-        if app.font_requests.is_empty() && app.font_previews.is_empty() {
+        if app.embed.font_requests.is_empty() && app.embed.font_previews.is_empty() {
             return;
         }
-        let mut wanted: Vec<(String, bool)> = std::mem::take(&mut app.font_requests).into_iter().map(|f| (f, false)).collect();
-        wanted.extend(std::mem::take(&mut app.font_previews).into_iter().map(|f| (f, true)));
+        let mut wanted: Vec<(String, bool)> = std::mem::take(&mut app.embed.font_requests).into_iter().map(|f| (f, false)).collect();
+        wanted.extend(std::mem::take(&mut app.embed.font_previews).into_iter().map(|f| (f, true)));
         let shared = self.shared.clone();
         defer(move || {
             let cb = shared.on_font_request.borrow().clone();
@@ -332,8 +404,8 @@ impl Shell {
         let Some(st) = guard.as_mut() else { return };
         let updates = st.after_frame(app);
         let cursor = st.cursor_change(app);
-        app.collaborators = st.collaborators();
-        let clip = app.canvas.canvas_rect.unwrap_or_else(|| ui.max_rect());
+        app.embed.collaborators = st.collaborators();
+        let clip = app.canvas.canvas_rect().unwrap_or_else(|| ui.max_rect());
         st.paint(app, &ui.painter().with_clip_rect(clip));
         drop(guard);
         if updates.is_empty() && cursor.is_none() {
@@ -371,34 +443,32 @@ impl Shell {
 
 impl eframe::App for Shell {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
-        for f in dropped {
-            let inbox = self.shared.inbox.clone();
-            let ctx = ctx.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped".into());
-                match f.bytes_async().await {
-                    Ok(bytes) => {
-                        inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, bytes));
-                        ctx.request_repaint();
-                    }
-                    Err(e) => log::error!("couldn't read dropped file {name}: {e}"),
-                }
-            });
-        }
         // AutoSave runs inside `logic`; saves handed over meanwhile are tagged as AutoSaves.
         self.shared.in_logic.set(true);
         self.with_app(|app| app.logic(ctx));
         self.shared.in_logic.set(false);
     }
 
+    /// Dropped files are read asynchronously into the intake (browsers can't read them at once),
+    /// touch gestures become pointer input, then the UI runtime gets the frame's input.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        let sender = self.shared.intake.borrow().clone();
+        for f in std::mem::take(&mut raw.dropped_files) {
+            let Some(sender) = sender.clone() else { continue };
+            wasm_bindgen_futures::spawn_local(async move {
+                let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped".into());
+                match f.bytes_async().await {
+                    Ok(bytes) => sender.dropped(vec![DroppedFile { path: None, name, bytes: Some(Arc::from(bytes)) }]),
+                    Err(e) => log::error!("couldn't read dropped file {name}: {e}"),
+                }
+            });
+        }
         let shared = self.shared.clone();
         self.with_app(|app| {
             if let Ok(mut touch) = shared.touch.try_borrow_mut() {
                 touch.input(ctx, raw, app);
             }
-            app.raw_input_hook(raw);
+            embed::before_input(ctx, |out| app.frame_input(out));
         });
     }
 
@@ -421,8 +491,8 @@ fn paint_marks(app: &mut WordApp, ctx: &egui::Context, marks: &[Mark]) {
     if marks.is_empty() {
         return;
     }
-    let Some(clip) = app.canvas.canvas_rect else { return };
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("wordcraft-host-marks"))).with_clip_rect(clip);
+    let Some(clip) = app.canvas.canvas_rect() else { return };
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("wordcraft-host-marks"))).with_clip_rect(clip);
     let layout = app.session.layout();
     let hint = app.session.page_hint;
     for m in marks {
@@ -466,98 +536,13 @@ fn fit_web_layout(app: &mut WordApp) {
     if app.session.view.mode == ViewMode::Print {
         return;
     }
-    let Some(area) = app.canvas.canvas_rect else { return };
+    let Some(area) = app.canvas.canvas_rect() else { return };
     // The canvas keeps 14 points for its scroll bar and an 18-point gap each side of the page.
     let scale = app.session.view.zoom.clamp(0.1, 5.0) * wordcraft_ui_egui::canvas::PX_PER_PT;
     let width = ((area.width() - 14.0 - 36.0) / scale).max(144.0).round();
     if width.is_finite() && (app.session.view.web_width - width).abs() >= 1.0 {
         app.session.view.web_width = width;
     }
-}
-
-/// `guard` is the flag the optional `beforeunload` guard reads ([`guard_unload`]).
-fn services(shared: &Rc<Shared>, ctx: egui::Context, guard: Option<Rc<Cell<bool>>>) -> Services {
-    let open_inbox = shared.inbox.clone();
-    let save_shared = shared.clone();
-    Services {
-        open_async: Some(Box::new(move |purpose: &str| {
-            let inbox = open_inbox.clone();
-            let ctx = ctx.clone();
-            let dialog = if purpose == "picture" {
-                rfd::AsyncFileDialog::new().add_filter("Pictures", IMAGE_EXTS)
-            } else {
-                rfd::AsyncFileDialog::new().add_filter("Documents", DOC_EXTS)
-            };
-            wasm_bindgen_futures::spawn_local(async move {
-                let Some(file) = dialog.pick_file().await else { return };
-                let bytes = file.read().await;
-                inbox.lock().unwrap_or_else(|e| e.into_inner()).push((file.file_name(), bytes));
-                ctx.request_repaint();
-            });
-        })),
-        pick_save: Some(Box::new(|name: &str| Some(name.to_string()))),
-        // Save / Save As / Export: hand the bytes to the host's onSave, or download them.
-        download: Some(Box::new(move |name: &str, bytes: &[u8]| {
-            let name = file_name(name);
-            let data = js_sys::Uint8Array::from(bytes);
-            let reason = if save_shared.in_logic.get() { "autosave" } else { "save" };
-            let shared = save_shared.clone();
-            defer(move || {
-                let cb = shared.on_save.borrow().clone();
-                match cb {
-                    Some(cb) => {
-                        let file = js_sys::Object::new();
-                        js_sys::Reflect::set(&file, &"name".into(), &name.as_str().into()).ok();
-                        js_sys::Reflect::set(&file, &"mimeType".into(), &mime_for(&name).into()).ok();
-                        js_sys::Reflect::set(&file, &"bytes".into(), &data).ok();
-                        js_sys::Reflect::set(&file, &"reason".into(), &reason.into()).ok();
-                        if let Err(e) = cb.call1(&JsValue::NULL, &file) {
-                            log::error!("wordcraft onSave handler threw: {e:?}");
-                        }
-                    }
-                    None => {
-                        if let Err(e) = download(&name, &data) {
-                            log::error!("download of {name} failed: {e}");
-                        }
-                    }
-                }
-            });
-            Ok(())
-        })),
-        print: Some(Box::new(print_pdf)),
-        on_dirty: guard.map(|dirty| Box::new(move |d: bool| dirty.set(d)) as Box<dyn Fn(bool)>),
-        inbox: Some(shared.inbox.clone()),
-        ..Default::default()
-    }
-}
-
-fn file_name(path: &str) -> String {
-    std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "document".into())
-}
-
-/// Trigger a browser download of `data` named `name`.
-fn download(name: &str, data: &js_sys::Uint8Array) -> Result<(), String> {
-    let js = |e: JsValue| format!("{e:?}");
-    let window = web_sys::window().ok_or("no window")?;
-    let document = window.document().ok_or("no document")?;
-    let parts = js_sys::Array::of1(data);
-    let opts = web_sys::BlobPropertyBag::new();
-    opts.set_type(mime_for(name));
-    let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &opts).map_err(js)?;
-    let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(js)?;
-    let a: web_sys::HtmlAnchorElement = document.create_element("a").map_err(js)?.dyn_into().map_err(|_| "not an anchor")?;
-    a.set_href(&url);
-    a.set_download(name);
-    a.style().set_property("display", "none").map_err(js)?;
-    let body = document.body().ok_or("no body")?;
-    body.append_child(&a).map_err(js)?;
-    a.click();
-    a.remove();
-    let revoke = Closure::once_into_js(move || {
-        web_sys::Url::revoke_object_url(&url).ok();
-    });
-    window.set_timeout_with_callback_and_timeout_and_arguments_0(revoke.unchecked_ref(), 10_000).map_err(js)?;
-    Ok(())
 }
 
 /// Ask before closing or leaving the tab with unsaved changes (from upstream `apps/wordcraft-web`).
@@ -572,63 +557,6 @@ fn guard_unload(dirty: Rc<Cell<bool>>) -> Result<UnloadListener, String> {
     });
     window.add_event_listener_with_callback("beforeunload", on_unload.as_ref().unchecked_ref()).map_err(|e| format!("{e:?}"))?;
     Ok(on_unload)
-}
-
-/// The hidden iframe the last print loaded its PDF into.
-const PRINT_FRAME_ID: &str = "wordcraft-print-frame";
-
-/// File › Print: load the PDF into a hidden iframe and open the browser's own print dialog on it,
-/// as upstream `apps/wordcraft-web` does (no download, no popup). The previous print's iframe and
-/// object URL are removed first.
-fn print_pdf(bytes: &[u8]) -> Result<(), String> {
-    let js = |e: JsValue| format!("{e:?}");
-    let window = web_sys::window().ok_or("no window")?;
-    let document = window.document().ok_or("no document")?;
-    if let Some(old) = document.get_element_by_id(PRINT_FRAME_ID) {
-        if let Ok(frame) = old.clone().dyn_into::<web_sys::HtmlIFrameElement>() {
-            let src = frame.src();
-            if src.starts_with("blob:") {
-                web_sys::Url::revoke_object_url(&src).ok();
-            }
-        }
-        old.remove();
-    }
-    let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
-    let opts = web_sys::BlobPropertyBag::new();
-    opts.set_type("application/pdf");
-    let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &opts).map_err(js)?;
-    let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(js)?;
-    let iframe: web_sys::HtmlIFrameElement =
-        match document.create_element("iframe").map_err(js).and_then(|e| e.dyn_into().map_err(|_| "not an iframe".to_string())) {
-            Ok(f) => f,
-            Err(e) => {
-                web_sys::Url::revoke_object_url(&url).ok();
-                return Err(e);
-            }
-        };
-    iframe.set_id(PRINT_FRAME_ID);
-    let attached = iframe
-        .style()
-        .set_property("display", "none")
-        .map_err(js)
-        .and_then(|()| document.body().ok_or_else(|| "no body".to_string()))
-        .and_then(|body| body.append_child(&iframe).map_err(js));
-    if let Err(e) = attached {
-        iframe.remove();
-        web_sys::Url::revoke_object_url(&url).ok();
-        return Err(e);
-    }
-    // Listen before setting `src`, so a fast load can't fire first.
-    let frame = iframe.clone();
-    let on_load = Closure::once_into_js(move || {
-        if let Some(w) = frame.content_window() {
-            // Some built-in PDF viewers print fine but still report an error here.
-            let _ = w.print();
-        }
-    });
-    iframe.set_onload(Some(on_load.unchecked_ref()));
-    iframe.set_src(&url);
-    Ok(())
 }
 
 /// A mounted WordCraft editor.
@@ -819,26 +747,14 @@ impl WordcraftHandle {
     /// UI preferences (ribbon tab, dark mode, language, ...) as JSON.
     #[wasm_bindgen(js_name = getPrefs)]
     pub fn get_prefs(&self) -> Result<String, JsValue> {
-        self.with_app(|app| serde_json::to_string(&app.prefs()).map_err(|e| e.to_string()))
+        self.with_app(|app| prefs_json(app).map(|v| v.to_string()))
     }
 
     /// Merge the given JSON object into the UI preferences.
     #[wasm_bindgen(js_name = setPrefs)]
     pub fn set_prefs(&self, patch: &str) -> Result<(), JsValue> {
         let patch: Value = serde_json::from_str(patch).map_err(|e| err(format!("prefs: {e}")))?;
-        self.with_app(|app| {
-            let mut base = serde_json::to_value(app.prefs()).map_err(|e| e.to_string())?;
-            merge_json(&mut base, &patch);
-            let ui: UiState = serde_json::from_value(base).map_err(|e| e.to_string())?;
-            // Upstream's apply_prefs opens on Home (as Word does at launch); a live change keeps
-            // the tab showing, or moves to the one asked for.
-            let tab = patch.get("tab").and_then(Value::as_str).map_or_else(|| app.ui.tab.clone(), str::to_string);
-            let backstage = patch.get("backstage").and_then(Value::as_bool).unwrap_or(app.ui.backstage);
-            app.apply_prefs(ui);
-            app.ui.tab = tab;
-            app.ui.backstage = backstage;
-            Ok(())
-        })
+        self.with_app(|app| apply_prefs(app, &patch))
     }
 
     /// `cb({ rev, dirty })` after edits (coalesced, at most once per frame). `null` removes it.
@@ -966,7 +882,7 @@ impl WordcraftHandle {
         self.with_app(|app| {
             app.session.external_history = false;
             app.session.history_requests.clear();
-            app.collaborators.clear();
+            app.embed.collaborators.clear();
             Ok(())
         })
     }
@@ -1058,7 +974,7 @@ impl WordcraftHandle {
     pub fn set_cloud_fonts(&self, json: &str) -> Result<(), JsValue> {
         let list: Vec<String> = serde_json::from_str(json).map_err(|e| err(format!("fonts: {e}")))?;
         self.with_app(|app| {
-            app.cloud_fonts = list;
+            app.embed.cloud_fonts = list;
             Ok(())
         })
     }
@@ -1073,7 +989,12 @@ impl WordcraftHandle {
     /// Returns how many faces were added.
     #[wasm_bindgen(js_name = addFont)]
     pub fn add_font(&self, bytes: Vec<u8>) -> Result<u32, JsValue> {
-        let n = wordcraft_fonts::FontDb::global().add_font(bytes);
+        // Into the font database documents lay out with, and the catalog the font box lists.
+        let catalog = craft::font_manager::Catalog::global().add_bytes(bytes.clone(), craft::font_manager::Source::User, &Default::default());
+        if let Err(e) = catalog {
+            log::warn!("the font box won't list an added font: {e}");
+        }
+        let n = wordcraft_fonts::FontDb::global().add_document_fonts(vec![(bytes, String::new())]);
         self.with_app(|app| {
             app.fonts_changed();
             Ok(u32::try_from(n).unwrap_or(u32::MAX))
@@ -1090,7 +1011,7 @@ impl WordcraftHandle {
     #[wasm_bindgen(js_name = setAiButton)]
     pub fn set_ai_button(&self, on: bool) -> Result<(), JsValue> {
         self.with_app(|app| {
-            app.ai_button = on;
+            app.embed.ai_button = on;
             Ok(())
         })
     }
@@ -1100,7 +1021,7 @@ impl WordcraftHandle {
     #[wasm_bindgen(js_name = setVersionHistory)]
     pub fn set_version_history(&self, on: bool) -> Result<(), JsValue> {
         self.with_app(|app| {
-            app.host_versions = on;
+            app.embed.host_versions = on;
             Ok(())
         })
     }
@@ -1244,9 +1165,190 @@ impl WordcraftHandle {
         if let Ok(mut app) = self.shared.app.try_borrow_mut() {
             *app = None;
         }
+        *self.shared.intake.borrow_mut() = None;
+        EDITORS.with(|e| e.borrow_mut().remove(&self.shared.key));
         *self.shared.ctx.borrow_mut() = None;
         if let (Some(listener), Some(window)) = (self.shared.unload_listener.borrow_mut().take(), web_sys::window()) {
             window.remove_event_listener_with_callback("beforeunload", listener.as_ref().unchecked_ref()).ok();
         }
+    }
+}
+
+/// The editor's preferences as the page reads and writes them: the saved preferences and the host's
+/// switches ([`Embed`]) in one camelCase object.
+fn prefs_json(app: &WordApp) -> Result<Value, String> {
+    let mut base = serde_json::to_value(app.prefs()).map_err(|e| e.to_string())?;
+    let embed = serde_json::to_value(&app.embed).map_err(|e| e.to_string())?;
+    merge_json(&mut base, &embed);
+    Ok(base)
+}
+
+/// Merge `patch` into the preferences and the host's switches. Upstream's `apply_prefs` opens on
+/// Home (as Word does at launch); a live change keeps the tab showing, or moves to the one asked for.
+fn apply_prefs(app: &mut WordApp, patch: &Value) -> Result<(), String> {
+    let mut base = prefs_json(app)?;
+    merge_json(&mut base, patch);
+    let prefs: Prefs = serde_json::from_value(base.clone()).map_err(|e| e.to_string())?;
+    let embed: Embed = serde_json::from_value(base).map_err(|e| e.to_string())?;
+    let tab = patch.get("tab").and_then(Value::as_str).map_or_else(|| app.ui.tab.clone(), str::to_string);
+    let backstage = patch.get("backstage").and_then(Value::as_bool).unwrap_or(app.ui.backstage);
+    app.apply_prefs(prefs);
+    app.embed.apply(embed);
+    app.ui.tab = tab;
+    app.ui.backstage = backstage;
+    Ok(())
+}
+
+/// A wake that asks `ctx` for a frame; callable from any task.
+fn waker(ctx: &egui::Context) -> impl Fn() + Send + Sync + Clone + 'static {
+    let ctx = ctx.clone();
+    move || ctx.request_repaint()
+}
+
+/// The clipboard's copy path: eframe's own text copy is the browser's only write.
+fn copy_out(ctx: &egui::Context, flavors: &[Flavor]) -> Result<usize, ClipboardError> {
+    let (index, text) = flavors.iter().enumerate().find(|(_, f)| f.mime == TEXT).ok_or(ClipboardError::NoFormat)?;
+    ctx.copy_text(String::from_utf8_lossy(&text.data).into_owned());
+    Ok(index)
+}
+
+/// Largest picture pasted from the browser's clipboard (as `insert.picture` allows).
+const MAX_PASTED_BYTES: f64 = (200u32 << 20) as f64;
+/// Most pictures one paste inserts.
+const MAX_PASTED_PICTURES: u32 = 20;
+
+/// Pasting a picture: eframe's paste handler reads only text, so a clipboard holding just
+/// pictures is read here and offered as a late paste (as upstream's web app does). A clipboard
+/// with text is left to eframe.
+fn listen_for_pasted_pictures(late: LateOffers) -> Result<(), String> {
+    let document = web_sys::window().and_then(|w| w.document()).ok_or("no document")?;
+    let late = Rc::new(late);
+    let on_paste = Closure::<dyn FnMut(web_sys::ClipboardEvent)>::new(move |e: web_sys::ClipboardEvent| {
+        let Some(data) = e.clipboard_data() else { return };
+        if !data.get_data("text").unwrap_or_default().is_empty() {
+            return;
+        }
+        let Some(files) = data.files() else { return };
+        for i in 0..files.length().min(MAX_PASTED_PICTURES) {
+            let Some(file) = files.get(i) else { continue };
+            if !file.type_().starts_with("image/") || file.size() > MAX_PASTED_BYTES {
+                continue;
+            }
+            let late = late.clone();
+            let mime = file.type_();
+            wasm_bindgen_futures::spawn_local(async move {
+                match wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await {
+                    Ok(buf) => late.offer(vec![Flavor::new(mime, js_sys::Uint8Array::new(&buf).to_vec())]),
+                    Err(e) => log::error!("couldn't read the pasted picture: {e:?}"),
+                }
+            });
+        }
+    });
+    document.add_event_listener_with_callback("paste", on_paste.as_ref().unchecked_ref()).map_err(|e| format!("{e:?}"))?;
+    // The listener lives as long as the page.
+    on_paste.forget();
+    Ok(())
+}
+
+/// The name a save goes by when it has none.
+const DEFAULT_NAME: &str = "Document.docx";
+
+/// The editor's files: the browser's pickers for opening, and every save (File › Save, Save As,
+/// Export, AutoSave) handed to the page's `onSave` when it has one, otherwise downloaded.
+struct EmbedFiles {
+    inner: Arc<BrowserFiles>,
+    /// The editor this belongs to ([`EDITORS`]).
+    key: u64,
+    /// Save answers by the id the inner files issued for them.
+    answers: Mutex<HashMap<u64, Picked>>,
+}
+
+impl EmbedFiles {
+    fn new(inner: Arc<BrowserFiles>, key: u64) -> Self {
+        Self { inner, key, answers: Mutex::new(HashMap::new()) }
+    }
+
+    /// Hand `bytes` to the editor's `onSave`; `false` when it has none (the browser downloads).
+    fn deliver(&self, name: &str, bytes: &[u8]) -> bool {
+        let Some(shared) = EDITORS.with(|e| e.borrow().get(&self.key).and_then(std::rc::Weak::upgrade)) else { return false };
+        if shared.on_save.borrow().is_none() {
+            return false;
+        }
+        let name = Path::new(name).file_name().map_or_else(|| name.to_string(), |n| n.to_string_lossy().to_string());
+        let data = js_sys::Uint8Array::from(bytes);
+        // AutoSave runs inside `logic`.
+        let reason = if shared.in_logic.get() { "autosave" } else { "save" };
+        defer(move || {
+            let cb = shared.on_save.borrow().clone();
+            if let Some(cb) = cb {
+                let file = js_sys::Object::new();
+                js_sys::Reflect::set(&file, &"name".into(), &name.as_str().into()).ok();
+                js_sys::Reflect::set(&file, &"mimeType".into(), &mime_for(&name).into()).ok();
+                js_sys::Reflect::set(&file, &"bytes".into(), &data).ok();
+                js_sys::Reflect::set(&file, &"reason".into(), &reason.into()).ok();
+                if let Err(e) = cb.call1(&JsValue::NULL, &file) {
+                    log::error!("wordcraft onSave handler threw: {e:?}");
+                }
+            }
+        });
+        true
+    }
+}
+
+impl Files for EmbedFiles {
+    fn pick(&self, request: PickRequest) -> PickId {
+        self.inner.pick(request)
+    }
+
+    fn take_answer(&self, id: PickId) -> Option<Picked> {
+        if let Some(answer) = self.answers.lock().unwrap_or_else(|e| e.into_inner()).remove(&id.0) {
+            return Some(answer);
+        }
+        self.inner.take_answer(id)
+    }
+
+    fn forget(&self, id: PickId) {
+        if self.answers.lock().unwrap_or_else(|e| e.into_inner()).remove(&id.0).is_none() {
+            self.inner.forget(id);
+        }
+    }
+
+    fn pending_pick(&self) -> Option<PendingPick> {
+        self.inner.pending_pick()
+    }
+
+    fn read(&self, path: &Path) -> Result<Vec<u8>, FileError> {
+        self.inner.read(path)
+    }
+
+    fn write(&self, path: &Path, bytes: &[u8], intent: WriteIntent) -> Result<bool, FileError> {
+        self.inner.write(path, bytes, intent)
+    }
+
+    fn last_folder(&self, purpose: &str) -> Option<PathBuf> {
+        self.inner.last_folder(purpose)
+    }
+
+    fn save(&self, request: PickRequest, bytes: Vec<u8>) -> PickId {
+        let name = request.file_name.clone().unwrap_or_else(|| DEFAULT_NAME.to_string());
+        if !self.deliver(&name, &bytes) {
+            return self.inner.save(request, bytes);
+        }
+        // A Save As (or a first save) makes the document this file; any other save keeps its file.
+        let answer = if request.save_as { Picked::Saved { path: PathBuf::from(&name), file_type: None } } else { Picked::Downloaded(name) };
+        // The inner files own the id space: a folder pick is answered at once with no picker, so
+        // it only yields an id, which is released and reused for this answer (as upstream does).
+        let id = self.inner.pick(PickRequest::folder("embed-save"));
+        self.inner.forget(id);
+        self.answers.lock().unwrap_or_else(|e| e.into_inner()).insert(id.0, answer);
+        id
+    }
+
+    fn can_pick(&self) -> bool {
+        self.inner.can_pick()
+    }
+
+    fn browser_saves(&self) -> bool {
+        true
     }
 }

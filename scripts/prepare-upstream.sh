@@ -16,7 +16,7 @@ BASE="$(tr -d '[:space:]' < "$ROOT/patches/BASE" 2>/dev/null || true)"
 BASE="${BASE:-$REV}"
 DIR="$ROOT/upstream"
 STAMP="$DIR/.prepared"
-want="$REV $BASE $(cat "$ROOT"/patches/*.patch 2>/dev/null | sha256sum | cut -c1-16)"
+want="$REV $BASE $( (cat "$ROOT"/patches/*.patch 2>/dev/null || true) | sha256sum | cut -c1-16)"
 
 if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$want" ]; then
   exit 0
@@ -58,7 +58,7 @@ if [ "$BASE" != "$REV" ]; then
     g format-patch -q --no-signature -o "$ROOT/patches" "$REV"
     echo "$REV" > "$ROOT/patches/BASE"
     BASE="$REV"
-    want="$REV $BASE $(cat "$ROOT"/patches/*.patch 2>/dev/null | sha256sum | cut -c1-16)"
+    want="$REV $BASE $( (cat "$ROOT"/patches/*.patch 2>/dev/null || true) | sha256sum | cut -c1-16)"
     echo "patches/ refreshed against $REV"
   fi
 fi

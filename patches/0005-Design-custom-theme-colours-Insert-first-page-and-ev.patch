@@ -1,0 +1,258 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliver Solomon <47696354+OliverSolomon@users.noreply.github.com>
+Date: Fri, 27 Nov 2026 08:43:47 +0000
+Subject: [PATCH 5/6] Design: custom theme colours; Insert: first-page and
+ even-page headers and footers by kind
+
+---
+ crates/engine/src/cmd/design.rs               | 70 +++++++++++++++--
+ crates/engine/src/cmd/insert.rs               |  8 +-
+ crates/engine/src/cmd/insert/header_footer.rs | 75 +++++++++++++++++++
+ crates/engine/src/cmd/insert/tests.rs         | 21 ++++++
+ 4 files changed, 163 insertions(+), 11 deletions(-)
+
+diff --git a/crates/engine/src/cmd/design.rs b/crates/engine/src/cmd/design.rs
+index 37466153..c6dde372 100644
+--- a/crates/engine/src/cmd/design.rs
++++ b/crates/engine/src/cmd/design.rs
+@@ -58,13 +58,9 @@ pub fn specs() -> Vec<CommandSpec> {
+             sel_result(s)
+         })
+         .params(r#"{"heading": string, "body"?: string}"#),
+-        CommandSpec::new("design.themeColors", "Colors", "Design › Document Formatting", |s, v| {
+-            let name = p::req_str(v, "name")?;
+-            let t = THEMES.iter().find(|t| t.0.eq_ignore_ascii_case(name)).ok_or_else(|| CmdError::Params(format!("unknown colours `{name}`")))?;
+-            set_accent(s, t.3[0]);
+-            sel_result(s)
+-        })
+-        .params(r#"{"name": string (see design.themes)}"#),
++        CommandSpec::new("design.themeColors", "Colors", "Design › Document Formatting", theme_colors).params(
++            r#"{"name"?: string (see design.themes), "colors"?: {"dk1"|"lt1"|"dk2"|"lt2"|"accent1"…"accent6"|"hlink"|"folHlink": "RRGGBB"}} (a built-in set by name, or custom colours under that name: written to the document theme, and accent1 colours the headings)"#,
++        ),
+         CommandSpec::new("design.styleSet", "Style Set", "Design › Document Formatting", style_set)
+             .params(r#"{"name": "default|basic|lines|shaded|casual|centered|minimalist|title"}"#),
+         CommandSpec::new("design.paragraphSpacing", "Paragraph Spacing", "Design › Document Formatting", para_spacing)
+@@ -94,6 +90,44 @@ pub fn specs() -> Vec<CommandSpec> {
+     ]
+ }
+ 
++/// The theme's colour slots in OOXML order.
++const SCHEME: [&str; 12] = ["dk1", "lt1", "dk2", "lt2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"];
++
++/// Design › Colors: a built-in colour set by name, or a custom one (`colors`) kept in the theme.
++fn theme_colors(s: &mut Session, v: &Value) -> CmdResult {
++    let Some(custom) = v.get("colors").and_then(Value::as_object) else {
++        let name = p::req_str(v, "name")?;
++        let t = THEMES.iter().find(|t| t.0.eq_ignore_ascii_case(name)).ok_or_else(|| CmdError::Params(format!("unknown colours `{name}`")))?;
++        set_accent(s, t.3[0]);
++        return sel_result(s);
++    };
++    let mut colors = s.doc.settings.theme_colors.clone();
++    for (i, d) in wordcraft_doc::THEME_COLORS.iter().enumerate() {
++        if colors.get(i).is_none() {
++            colors.push(*d);
++        }
++    }
++    let mut accent = None;
++    for (key, val) in custom {
++        let i = SCHEME.iter().position(|n| n.eq_ignore_ascii_case(key)).ok_or_else(|| CmdError::Params(format!("unknown theme colour `{key}`")))?;
++        let c = val.as_str().and_then(Rgb::parse).ok_or_else(|| CmdError::Params(format!("`{key}` is not a colour")))?;
++        if let Some(x) = colors.get_mut(i) {
++            *x = c;
++        }
++        if i == 4 {
++            accent = Some(c);
++        }
++    }
++    s.doc.settings.theme_colors = colors;
++    if let Some(name) = p::str(v, "name") {
++        s.doc.settings.theme_name = name.chars().take(64).collect();
++    }
++    if let Some(a) = accent {
++        set_accent(s, a);
++    }
++    sel_result(s)
++}
++
+ fn set_fonts(s: &mut Session, heading: &str, body: &str) {
+     s.doc.settings.major_font = heading.into();
+     s.doc.settings.minor_font = body.into();
+@@ -295,3 +329,25 @@ fn page_borders(s: &mut Session, v: &Value) -> CmdResult {
+     }
+     sel_result(s)
+ }
++
++#[cfg(test)]
++mod custom_color_tests {
++    use serde_json::json;
++    use wordcraft_doc::props::Rgb;
++
++    use crate::Session;
++
++    /// Custom colours reach the document theme (and survive a save), and junk is refused.
++    #[test]
++    fn custom_theme_colors_reach_the_theme() {
++        let mut s = Session::new(wordcraft_doc::Document::default());
++        s.run("design.themeColors", &json!({"name": "From logo", "colors": {"accent1": "1A5C8A", "hlink": "0B6E99"}})).unwrap();
++        assert_eq!(s.doc.settings.theme_colors.get(4), Some(&Rgb(0x1A, 0x5C, 0x8A)));
++        assert_eq!(s.doc.settings.theme_colors.get(10), Some(&Rgb(0x0B, 0x6E, 0x99)));
++        assert_eq!(s.doc.settings.theme_name, "From logo");
++        let back = wordcraft_docx::read(&wordcraft_docx::write(&s.doc).unwrap()).unwrap();
++        assert_eq!(back.settings.theme_colors.get(4), Some(&Rgb(0x1A, 0x5C, 0x8A)));
++        assert!(s.run("design.themeColors", &json!({"colors": {"nope": "000000"}})).is_err());
++        assert!(s.run("design.themeColors", &json!({"colors": {"accent1": "not a colour"}})).is_err());
++    }
++}
+diff --git a/crates/engine/src/cmd/insert.rs b/crates/engine/src/cmd/insert.rs
+index 2d44a456..2d63cb3d 100644
+--- a/crates/engine/src/cmd/insert.rs
++++ b/crates/engine/src/cmd/insert.rs
+@@ -74,15 +74,15 @@ pub fn specs() -> Vec<CommandSpec> {
+         // is made by the mutating `insert.createHeader`/`insert.createFooter` (undoable, refused in
+         // a protected document).
+         CommandSpec::new("insert.editHeader", "Edit Header", "Insert › Header & Footer › Header", |s, v| edit_hf(s, v, true))
+-            .params(r#"{"page"?: number (0-based: the header that page shows, created if it has none)}"#)
++            .params(r#"{"page"?: number (0-based: the header that page shows, created if it has none), "kind"?: "default|first|even" (the caret section's default, first-page or even-page header, turning on Different First Page or Different Odd & Even Pages)}"#)
+             .pure(),
+         CommandSpec::new("insert.editFooter", "Edit Footer", "Insert › Header & Footer › Footer", |s, v| edit_hf(s, v, false))
+-            .params(r#"{"page"?: number (0-based: the footer that page shows, created if it has none)}"#)
++            .params(r#"{"page"?: number (0-based: the footer that page shows, created if it has none), "kind"?: "default|first|even"}"#)
+             .pure(),
+         CommandSpec::new("insert.createHeader", "Header", "Insert › Header & Footer", |s, v| create_hf(s, v, true))
+-            .params(r#"{"page"?: number (0-based; default: the caret's section)} — the header that page shows, created if it has none, with the caret in it"#),
++            .params(r#"{"page"?: number (0-based; default: the caret's section), "kind"?: "default|first|even"} — the header that page shows (or the caret section's one of that kind), created if it has none, with the caret in it"#),
+         CommandSpec::new("insert.createFooter", "Footer", "Insert › Header & Footer", |s, v| create_hf(s, v, false))
+-            .params(r#"{"page"?: number (0-based; default: the caret's section)} — the footer that page shows, created if it has none, with the caret in it"#),
++            .params(r#"{"page"?: number (0-based; default: the caret's section), "kind"?: "default|first|even"} — the footer that page shows (or the caret section's one of that kind), created if it has none, with the caret in it"#),
+         CommandSpec::new("insert.closeHeader", "Close Header and Footer", "Header & Footer", |s, _| {
+             // Back where the caret was in the body, as Word does, not on page 1.
+             let back = s.hf_return.take().filter(|_| s.in_header_footer());
+diff --git a/crates/engine/src/cmd/insert/header_footer.rs b/crates/engine/src/cmd/insert/header_footer.rs
+index 2bdbeb5c..e9754cd4 100644
+--- a/crates/engine/src/cmd/insert/header_footer.rs
++++ b/crates/engine/src/cmd/insert/header_footer.rs
+@@ -30,6 +30,65 @@ pub(super) fn hf_part(s: &mut Session, header: bool) -> u32 {
+     id
+ }
+ 
++/// Which of a section's headers (or footers) a `kind` param names.
++#[derive(Clone, Copy, PartialEq, Eq)]
++enum HfKind {
++    Default,
++    First,
++    Even,
++}
++
++impl HfKind {
++    /// `None` when the params name no kind (the page's own slot is meant).
++    fn parse(v: &Value) -> Result<Option<HfKind>, CmdError> {
++        match p::str(v, "kind") {
++            None => Ok(None),
++            Some("default" | "primary" | "odd") => Ok(Some(HfKind::Default)),
++            Some("first") => Ok(Some(HfKind::First)),
++            Some("even") => Ok(Some(HfKind::Even)),
++            Some(x) => Err(CmdError::Params(format!("unknown `kind` `{x}` (default, first or even)"))),
++        }
++    }
++}
++
++/// The caret section's existing header (or footer) of `kind`, if any.
++fn kind_part(s: &Session, header: bool, kind: HfKind) -> Option<u32> {
++    let block = s.sel.focus.path.0.first().copied().unwrap_or(0) as usize;
++    let set = s.doc.sections().into_iter().find(|(end, _)| block <= *end).or_else(|| s.doc.sections().pop()).map(|(_, sp)| if header { sp.headers } else { sp.footers })?;
++    let id = match kind {
++        HfKind::Default => set.default,
++        HfKind::First => set.first,
++        HfKind::Even => set.even,
++    };
++    id.filter(|id| s.doc.parts.contains_key(id))
++}
++
++/// The caret section's header (or footer) of `kind`, made when there is none; a first-page one
++/// turns on Different First Page and an even-page one Different Odd & Even Pages.
++fn kind_part_made(s: &mut Session, header: bool, kind: HfKind) -> u32 {
++    if let Some(id) = kind_part(s, header, kind) {
++        return id;
++    }
++    let block = s.sel.focus.path.0.first().copied().unwrap_or(0) as usize;
++    let style = if header { "Header" } else { "Footer" };
++    let id = s.doc.add_part(if header { PartKind::Header } else { PartKind::Footer }, vec![para_block(Paragraph::new().styled(style))]);
++    let sect = s.doc.section_mut(block);
++    let set = if header { &mut sect.headers } else { &mut sect.footers };
++    match kind {
++        HfKind::Default => set.default = Some(id),
++        HfKind::First => {
++            set.first = Some(id);
++            sect.title_page = true;
++        }
++        HfKind::Even => {
++            set.even = Some(id);
++            s.doc.settings.even_odd_headers = true;
++        }
++    }
++    s.new_header_parts.push(id);
++    id
++}
++
+ /// Three independently editable cells spanning the section's text width.
+ fn three_column_hf(s: &Session, style: &str) -> wordcraft_doc::Blocks {
+     let block = s.sel.focus.path.0.first().copied().unwrap_or(0) as usize;
+@@ -89,6 +148,17 @@ pub(super) fn header_footer(s: &mut Session, v: &Value, header: bool) -> CmdResu
+ }
+ 
+ pub(super) fn edit_hf(s: &mut Session, v: &Value, header: bool) -> CmdResult {
++    // A named kind (the default, first-page or even-page header of the caret's section): go to
++    // it, or have the mutating command make it.
++    if let Some(kind) = HfKind::parse(v)? {
++        let Some(id) = kind_part(s, header, kind) else {
++            let cmd = if header { "insert.createHeader" } else { "insert.createFooter" };
++            return s.run(cmd, v);
++        };
++        s.touch();
++        s.sel = Selection::caret(s.doc.end_of(StoryRef::Part(id)));
++        return Ok(json!({"story": id}));
++    }
+     let mut page = p::u64(v, "page").map(|page| usize::try_from(page).unwrap_or(usize::MAX));
+     if page.is_none() && s.sel.focus.story == StoryRef::Body {
+         // The caret's page: with Different First Page on, page 1 edits its own header (#2826).
+@@ -132,6 +202,11 @@ fn shown_hf(s: &mut Session, page: usize, header: bool) -> Result<Option<u32>, C
+ }
+ 
+ pub(super) fn create_hf(s: &mut Session, v: &Value, header: bool) -> CmdResult {
++    if let Some(kind) = HfKind::parse(v)? {
++        let id = kind_part_made(s, header, kind);
++        s.sel = Selection::caret(s.doc.end_of(StoryRef::Part(id)));
++        return Ok(json!({"story": id}));
++    }
+     let id = match p::u64(v, "page") {
+         Some(page) => {
+             let page = usize::try_from(page).unwrap_or(usize::MAX);
+diff --git a/crates/engine/src/cmd/insert/tests.rs b/crates/engine/src/cmd/insert/tests.rs
+index de38fe91..a6278b4a 100644
+--- a/crates/engine/src/cmd/insert/tests.rs
++++ b/crates/engine/src/cmd/insert/tests.rs
+@@ -434,3 +434,24 @@ fn shared_base64_preserves_command_payload_bytes() {
+     assert_eq!(super::objects::base64_decode("Z g\n"), Some(b"f".to_vec()));
+     assert_eq!(super::objects::base64_decode("!!!!"), None);
+ }
++
++/// A named kind reaches the caret section's first-page or even-page header and footer, making
++/// them (and turning on their switch) when there are none, without touching the default one.
++#[test]
++fn header_and_footer_kinds_reach_their_own_slot() {
++    let mut s = Session::new(wordcraft_doc::Document::default());
++    s.run("insert.editHeader", &json!({"kind": "first"})).unwrap();
++    s.run("text.insert", &json!({"text": "Cover"})).unwrap();
++    s.run("insert.closeHeader", &json!({})).unwrap();
++    let sect = s.doc.section_mut(0).clone();
++    assert!(sect.title_page);
++    assert!(sect.headers.first.is_some() && sect.headers.default.is_none());
++    s.run("insert.editFooter", &json!({"kind": "even"})).unwrap();
++    s.run("insert.closeHeader", &json!({})).unwrap();
++    assert!(s.doc.settings.even_odd_headers);
++    // Going back to the first-page header finds the same part.
++    let first = s.doc.section_mut(0).headers.first;
++    let story = s.run("insert.editHeader", &json!({"kind": "first"})).unwrap()["story"].as_u64().map(|id| id as u32);
++    assert_eq!(story, first);
++    assert!(s.run("insert.editHeader", &json!({"kind": "sideways"})).is_err());
++}

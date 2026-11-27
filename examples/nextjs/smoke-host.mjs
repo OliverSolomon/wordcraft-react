@@ -8,7 +8,7 @@
 // Writes smoke-host-*.png next to this file. Exits non-zero on any failure.
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import sharp from 'sharp';
 
 const base = (process.argv[2] ?? 'http://localhost:3000').replace(/\/$/, '');
@@ -86,11 +86,17 @@ await scenario('default-snapshot', '', async (page) => {
   });
   assert.deepEqual(box, { top: 0, h: 0, w: 0 }, 'the page fills the editor');
   const shot = await page.screenshot({ path: 'smoke-host-1-default.png' });
-  // A snapshot of the chrome (title bar and ribbon), compared with the one kept on first run.
+  // A snapshot of the chrome (title bar and ribbon), compared with the one kept for this upstream
+  // commit: an upstream sync may redraw the chrome, the package's own changes must not. A commit
+  // with no snapshot yet keeps this run's (commit it to guard later runs).
   const band = await sharp(shot).extract({ left: 0, top: 0, width: 1360, height: 150 }).removeAlpha().raw().toBuffer();
   mkdirSync('snapshots', { recursive: true });
-  const file = 'snapshots/host-default-chrome.png';
-  if (!existsSync(file)) writeFileSync(file, await sharp(band, { raw: { width: 1360, height: 150, channels: 3 } }).png().toBuffer());
+  const rev = readFileSync(new URL('../../UPSTREAM_REV', import.meta.url), 'utf8').trim().slice(0, 7);
+  const file = `snapshots/host-default-chrome-${rev}.png`;
+  if (!existsSync(file)) {
+    writeFileSync(file, await sharp(band, { raw: { width: 1360, height: 150, channels: 3 } }).png().toBuffer());
+    console.log(`note: kept a new default-chrome snapshot for upstream ${rev} (${file})`);
+  }
   else {
     const want = await sharp(file).removeAlpha().raw().toBuffer();
     let diff = 0;

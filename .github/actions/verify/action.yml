@@ -38,13 +38,14 @@ runs:
         npm run smoke:mobile -- http://localhost:3000
         npm run smoke:features -- http://localhost:3000
         npm run smoke:extras -- http://localhost:3000
-    - name: Co-editing smoke test (two browsers through y-websocket)
+    - name: Co-editing and host smoke tests (two browsers through y-websocket)
       shell: bash
       working-directory: examples/nextjs
       run: |
         npm run collab-server > collab.log 2>&1 &
         for i in $(seq 1 30); do (echo > /dev/tcp/127.0.0.1/1234) 2>/dev/null && break; sleep 1; done
         npm run smoke:collab -- http://localhost:3000
+        npm run smoke:host -- http://localhost:3000
     - name: Keep screenshots
       if: always()
       uses: actions/upload-artifact@v5
@@ -53,4 +54,6 @@ runs:
         path: |
           examples/nextjs/smoke-*.png
           examples/nextjs/collab-*.png
+          examples/nextjs/smoke-host-*.png
+          examples/nextjs/snapshots/*.png
         if-no-files-found: ignore

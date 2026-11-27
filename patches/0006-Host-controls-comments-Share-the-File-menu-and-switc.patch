@@ -1,0 +1,416 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliver Solomon <47696354+OliverSolomon@users.noreply.github.com>
+Date: Fri, 27 Nov 2026 08:46:36 +0000
+Subject: [PATCH 6/6] Host controls: comments, Share, the File menu and
+ switches for each surface
+
+New Comment without text asks the host to compose (no empty comment, the
+pane never opens, balloon clicks go to the host), Share can go to the host,
+the File menu and each export format can be arranged item by item, and the
+host can hide the context menu, rulers, Navigation pane, zoom and the
+page-view buttons.
+---
+ crates/ui-egui/src/app.rs               |   7 ++
+ crates/ui-egui/src/app/commands.rs      |  32 ++++++++
+ crates/ui-egui/src/backstage.rs         | 100 ++++++++++++++++++++----
+ crates/ui-egui/src/canvas.rs            |   6 +-
+ crates/ui-egui/src/canvas/balloons.rs   |   7 +-
+ crates/ui-egui/src/chrome/status_bar.rs |   9 ++-
+ crates/ui-egui/src/embed.rs             |  42 ++++++++++
+ crates/ui-egui/src/print_page.rs        |  19 ++++-
+ 8 files changed, 201 insertions(+), 21 deletions(-)
+
+diff --git a/crates/ui-egui/src/app.rs b/crates/ui-egui/src/app.rs
+index f9ff46d8..7fe956f5 100644
+--- a/crates/ui-egui/src/app.rs
++++ b/crates/ui-egui/src/app.rs
+@@ -318,6 +318,13 @@ impl WordApp {
+ 
+     /// Per-frame logic before layout: background work, the control channel, file results.
+     pub fn logic(&mut self, ctx: &egui::Context) {
++        // Surfaces a host page turned off stay off, whatever turned them on (a command, a search hit).
++        if self.embed.host_comments {
++            self.session.view.comments_pane = false;
++        }
++        if self.embed.hide_nav_pane {
++            self.session.view.nav_pane = false;
++        }
+         let lang = i18n::Lang::from_pref(&self.ui.language);
+         if self.ctx.is_none() {
+             self.ctx = Some(ctx.clone());
+diff --git a/crates/ui-egui/src/app/commands.rs b/crates/ui-egui/src/app/commands.rs
+index fed1bc54..d7c291b2 100644
+--- a/crates/ui-egui/src/app/commands.rs
++++ b/crates/ui-egui/src/app/commands.rs
+@@ -30,10 +30,39 @@ impl WordApp {
+         result
+     }
+ 
++    /// What a host page owns instead of WordCraft ([`crate::embed::Embed`]): with comments its
++    /// own, New Comment without text asks it to compose one (no empty comment is made) and the
++    /// comments pane asks it to show its own; with sharing its own, Share asks it. `None` for
++    /// everything else.
++    fn host_takes(&mut self, id: &str, params: &Value) -> Option<Result<Value, String>> {
++        if self.embed.host_comments {
++            if id == "review.newComment" && params.get("text").and_then(Value::as_str).is_none_or(|t| t.trim().is_empty()) {
++                if let Some(why) = self.session.why_disabled(id) {
++                    return Some(Err(format!("{id}: {why}")));
++                }
++                self.embed.event("compose");
++                return Some(Ok(json!({"pending": "compose"})));
++            }
++            if id == "view.commentsPane" {
++                self.session.view.comments_pane = false;
++                self.embed.event("comments");
++                return Some(Ok(json!({"pending": "comments"})));
++            }
++        }
++        if self.embed.host_share && id == "file.share" {
++            self.embed.event("share");
++            return Some(Ok(json!({"pending": "share"})));
++        }
++        None
++    }
++
+     /// Run a command the user asked for (ribbon, shortcut, Backstage, file drop). New, Open,
+     /// Close, Envelopes, Labels and Finish & Merge on a document with unsaved changes first ask
+     /// Save / Don't Save / Cancel, and the command runs once that is answered (`ui.saveChanges`).
+     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
++        if let Some(r) = self.host_takes(id, &params) {
++            return r;
++        }
+         // Undo and Redo act on whole steps: a SmartArt typing run still open is folded into its one step first,
+         // or Undo would take back only the last keystroke of it.
+         if matches!(id, "edit.undo" | "edit.undoTo" | "edit.redo") {
+@@ -112,6 +141,9 @@ impl WordApp {
+     /// Run a command for a script or an agent (control channel, MCP bridge): never asks first.
+     /// UI-level commands (`ui.*`) are handled here, the rest by the engine.
+     pub fn execute(&mut self, id: &str, params: Value) -> Result<Value, String> {
++        if let Some(r) = self.host_takes(id, &params) {
++            return r;
++        }
+         self.clear_command_targets(id);
+         if let Some(error) = self.document_required_error(id) {
+             return Err(error);
+diff --git a/crates/ui-egui/src/backstage.rs b/crates/ui-egui/src/backstage.rs
+index 4df78678..65a95e6c 100644
+--- a/crates/ui-egui/src/backstage.rs
++++ b/crates/ui-egui/src/backstage.rs
+@@ -158,7 +158,9 @@ fn activated<K, E>(events: Vec<CollectionEvent<K, E>>) -> Vec<K> {
+ /// the menu holds the app.
+ #[derive(Default)]
+ struct MenuChoice {
+-    page: RefCell<Option<&'static str>>,
++    page: RefCell<Option<String>>,
++    /// A host page's own item (or one it takes over) was clicked.
++    host: RefCell<Option<String>>,
+     about: Cell<bool>,
+     discord: Cell<bool>,
+ }
+@@ -191,9 +193,10 @@ pub(crate) fn show(ui: &mut Ui, cx: &mut BodyCx<'_>, app: &mut WordApp) {
+     let choice = MenuChoice::default();
+     let current = app.ui.backstage_page.clone();
+     let show_discord = app.ui.show_discord;
++    let items = nav_items(app);
+     // The row starts at the reading start, so the side menu is at the right in a mirrored interface.
+     let _ = Row::new().fill().show(ui, |ui, _| {
+-        side_menu(ui, band, &current, has_document, show_discord, &choice);
++        side_menu(ui, band, &current, has_document, show_discord, &items, &choice);
+         let print = current == "print";
+         // Stacked rows' spacing between a page's controls, as production's (Browse… over Browse in WordCraft…).
+         // The page stands on the window's background (production's `t.ribbon`, #f9f9f9 light), not the white panel,
+@@ -209,7 +212,10 @@ pub(crate) fn show(ui: &mut Ui, cx: &mut BodyCx<'_>, app: &mut WordApp) {
+         });
+     });
+     if let Some(id) = choice.page.take() {
+-        go_to_page(app, id);
++        go_to_page(app, &id);
++    }
++    if let Some(id) = choice.host.take() {
++        app.embed.event(format!("file:{id}"));
+     }
+     if choice.about.get() {
+         let _ = crate::dialogs::open(app, "about", &json!({}));
+@@ -242,7 +248,7 @@ fn page_body(ui: &mut Ui, app: &mut WordApp, page: &str) {
+ /// The side menu: Back, one button per page (the page buttons are one inspected region, from which
+ /// the keytips take their rects), then About and the community link unless the user turned the
+ /// community button off, as the title bar's pill does.
+-fn side_menu(ui: &mut Ui, band: f32, current: &str, has_document: bool, show_discord: bool, choice: &MenuChoice) {
++fn side_menu(ui: &mut Ui, band: f32, current: &str, has_document: bool, show_discord: bool, items: &[NavItem], choice: &MenuChoice) {
+     // At least the side menu's width and as tall as the window, About at its foot (production's 200 pt full-height
+     // rail); its rows are the side menu place's (production's 38 pt rows of 14 pt names).
+     let _ = Stack::new()
+@@ -275,7 +281,7 @@ fn side_menu(ui: &mut Ui, band: f32, current: &str, has_document: bool, show_dis
+                     |overrides| {
+                         overrides.values.set(ControlPlace::SideMenu);
+                     },
+-                    |ui| page_rows(ui, current, has_document, choice),
++                    |ui| page_rows(ui, current, has_document, items, choice),
+                 );
+             });
+         });
+@@ -302,23 +308,81 @@ fn footer_links(ui: &mut Ui, show_discord: bool, choice: &MenuChoice) {
+     }
+ }
+ 
+-/// The side menu's page rows, one full-width button per page.
+-fn page_rows(ui: &mut Ui, current: &str, has_document: bool, choice: &MenuChoice) {
+-    for (id, name, icon) in PAGES {
++/// One side-menu row: WordCraft's page, or an item a host page arranged ([`crate::embed::FileMenuItem`]).
++struct NavItem {
++    id: String,
++    name: Label,
++    icon: Option<&'static str>,
++    /// Why it is greyed out, shown on hover; empty when it is on.
++    disabled: String,
++    /// The host page answers it (its own item, or one it takes over).
++    host: bool,
++    /// The heading it sits under (shown when it differs from the row above's).
++    section: String,
++}
++
++/// The side menu's rows: WordCraft's pages, or the host page's arrangement of them and its own
++/// items, in its order (export formats are arranged on the Export page instead).
++fn nav_items(app: &WordApp) -> Vec<NavItem> {
++    let own = |id: &str| PAGES.iter().find(|(p, ..)| *p == id);
++    let menu = &app.embed.file_menu;
++    if menu.is_empty() {
++        return PAGES
++            .iter()
++            .map(|(id, name, icon)| NavItem { id: (*id).into(), name: label(name), icon: Some(icon), disabled: String::new(), host: false, section: String::new() })
++            .collect();
++    }
++    menu.iter()
++        .filter(|i| !i.hidden && !i.id.starts_with("export."))
++        .map(|i| {
++            let page = own(&i.id);
++            let name = if !i.label.is_empty() {
++                Label::from(i.label.clone())
++            } else if let Some((_, name, _)) = page {
++                label(name)
++            } else if i.id == "share" {
++                label("Share")
++            } else {
++                Label::from(i.id.clone())
++            };
++            let icon = page.map(|(_, _, icon)| *icon).or_else(|| (i.id == "share").then_some("share"));
++            let host = i.host || (page.is_none() && i.id != "share");
++            NavItem { id: i.id.clone(), name, icon, disabled: i.disabled.clone(), host, section: i.section.clone() }
++        })
++        .collect()
++}
++
++/// The side menu's page rows, one full-width button per page, under the host's section headings.
++fn page_rows(ui: &mut Ui, current: &str, has_document: bool, items: &[NavItem], choice: &MenuChoice) {
++    let mut section = "";
++    for item in items {
++        if !item.section.is_empty() && item.section != section {
++            let _ = Text::new(item.section.clone()).role(TypeRole::Caption).show(ui);
++        }
++        section = &item.section;
+         // No document open (#1129): Info, Save, Save As, Print and Export are greyed out.
+-        let on = has_document || works_without_document(id);
+-        let row = Button::new(label(name))
+-            .id_salt(("backstage-page", id))
+-            .icon(crate::icons::spec(icon))
++        let on = (has_document || works_without_document(&item.id) || item.host) && item.disabled.is_empty();
++        let mut row = Button::new(item.name.clone())
++            .id_salt(("backstage-page", item.id.as_str()))
+             .variant(Variant::GHOST)
+             .sizing(Sizing::FillWidth)
+             // Icon and name at the reading start of the full-width row, as production's menu.
+             .align(HAlign::Start)
+-            .selected(current == id)
+-            .enabled(on)
+-            .show(ui);
++            .selected(current == item.id)
++            .enabled(on);
++        if let Some(icon) = item.icon {
++            row = row.icon(crate::icons::spec(icon));
++        }
++        if !item.disabled.is_empty() {
++            row = row.tooltip(item.disabled.clone());
++        }
++        let row = row.show(ui);
+         if clicked(&row) {
+-            *choice.page.borrow_mut() = Some(id);
++            if item.host {
++                *choice.host.borrow_mut() = Some(item.id.clone());
++            } else {
++                *choice.page.borrow_mut() = Some(item.id.clone());
++            }
+         }
+     }
+ }
+@@ -353,6 +417,10 @@ pub(crate) fn go_to_page(app: &mut WordApp, id: &str) {
+         "close" => {
+             let _ = app.run("file.close", json!({}));
+         }
++        // Not a page either: Share (a host page may take it, `Embed::host_share`).
++        "share" => {
++            let _ = app.run("file.share", json!({}));
++        }
+         _ => app.ui.backstage_page = id.into(),
+     }
+ }
+diff --git a/crates/ui-egui/src/canvas.rs b/crates/ui-egui/src/canvas.rs
+index af56a8c8..335e2228 100644
+--- a/crates/ui-egui/src/canvas.rs
++++ b/crates/ui-egui/src/canvas.rs
+@@ -788,7 +788,8 @@ fn show_pages(app: &mut WordApp, ui: &mut Ui, layout: &Arc<DocLayout>, full: Rec
+     let selected = selection_page_rects(app, layout);
+     let areas = mark_areas(app, layout, &selected);
+     let bodies: Vec<(f64, f64)> = layout.pages.iter().map(|p| (f64::from(p.body.y), f64::from(p.body.bottom()))).collect();
+-    let show_rulers = app.session.view.ruler
++    let show_rulers = !app.embed.hide_rulers
++        && app.session.view.ruler
+         && app.session.view.mode == wordcraft_layout::ViewMode::Print
+         && crate::chrome::Screen::of(&app.session.view) == crate::chrome::Screen::Normal;
+     let options =
+@@ -1011,6 +1012,7 @@ fn show_pages(app: &mut WordApp, ui: &mut Ui, layout: &Arc<DocLayout>, full: Rec
+     // The one context-menu ask of the pass: Shift+F10 or `ui.contextMenu` (below the caret), a click on the equation
+     // frame's options strip, then the tool host's own request by how it was asked for.
+     let ask = app.canvas.context_request.take().or_else(|| strip_click.map(ContextAsk::AtPointer));
++    let hide_menu = app.embed.hide_context_menu;
+     let ask = ask.or_else(|| {
+         let request = tool_response.as_ref()?.context?;
+         Some(match request.source {
+@@ -1018,6 +1020,8 @@ fn show_pages(app: &mut WordApp, ui: &mut Ui, layout: &Arc<DocLayout>, full: Rec
+             _ => ContextAsk::AtPointer(request.at),
+         })
+     });
++    // A host page may have no right-click menu on the page.
++    let ask = ask.filter(|_| !hide_menu);
+     context_menu::show(app, ui, &out.canvas.response, ask);
+ }
+ 
+diff --git a/crates/ui-egui/src/canvas/balloons.rs b/crates/ui-egui/src/canvas/balloons.rs
+index ad00b373..a14cced0 100644
+--- a/crates/ui-egui/src/canvas/balloons.rs
++++ b/crates/ui-egui/src/canvas/balloons.rs
+@@ -71,7 +71,12 @@ fn apply(app: &mut WordApp, cards: &[Card], edit: CommentEdit) {
+         CommentEdit::Select(threads) => {
+             let Some(thread) = threads.first().copied() else { return };
+             let Some(id) = app_id(thread) else { return };
+-            focus_balloon(app, id);
++            // A host page that owns comments shows the thread itself; the caret still goes to its text.
++            if app.embed.host_comments {
++                app.embed.event(format!("comment:{id}"));
++            } else {
++                focus_balloon(app, id);
++            }
+             let pos = cards.iter().find_map(|c| match &c.what {
+                 What::Thread(t) if t.id == thread => Some(c.pos.clone()),
+                 _ => None,
+diff --git a/crates/ui-egui/src/chrome/status_bar.rs b/crates/ui-egui/src/chrome/status_bar.rs
+index c685be14..6c5fa2ec 100644
+--- a/crates/ui-egui/src/chrome/status_bar.rs
++++ b/crates/ui-egui/src/chrome/status_bar.rs
+@@ -224,8 +224,12 @@ fn controls(app: &mut WordApp, ui: &mut Ui, fit: usize) -> Option<egui::Rect> {
+         };
+         rects.push(focus.rect);
+         // Icons only, Read Mode first and Web Layout last, each named in its tooltip, the current view on (prod
+-        // `chrome.rs:925-943`).
++        // `chrome.rs:925-943`). A host page may leave them out, and the zoom controls.
++        let (views, zoom) = (!app.embed.hide_view_switcher, !app.embed.hide_zoom);
+         let _ = Row::new().gap(Gap::Item).show(ui, |ui, _| {
++            if !views {
++                return;
++            }
+             let (mode, read) = (app.session.view.mode, app.session.view.read_mode);
+             for (id, icon, name, on) in [
+                 ("view.readMode", "readMode", tl!("Read Mode"), read),
+@@ -255,6 +259,9 @@ fn controls(app: &mut WordApp, ui: &mut Ui, fit: usize) -> Option<egui::Rect> {
+             }
+         };
+         let _ = Row::new().show(ui, |ui, _| {
++            if !zoom {
++                return;
++            }
+             let out = IconButton::new(IconId::new("wordcraft.minus"))
+                 .label(tl!("Zoom Out").to_string())
+                 .tooltip(TooltipSpec::new(tl!("Zoom Out").to_string()))
+diff --git a/crates/ui-egui/src/embed.rs b/crates/ui-egui/src/embed.rs
+index 3f8c228c..a5a3b08a 100644
+--- a/crates/ui-egui/src/embed.rs
++++ b/crates/ui-egui/src/embed.rs
+@@ -120,6 +120,48 @@ impl Embed {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    use crate::{Services, WordApp};
++    use serde_json::json;
++    use wordcraft_engine::Session;
++
++    fn app() -> WordApp {
++        let mut s = Session::new(wordcraft_doc::Document::from_text("Synthetic host text"));
++        s.run("select.text", &json!({"text": "host"})).unwrap();
++        WordApp::new(s, Services::default())
++    }
++
++    /// With the host owning comments, every New Comment without text asks it to compose and
++    /// makes nothing; the pane never opens; a comment with text is still made (the host's own).
++    #[test]
++    fn host_comments_never_make_an_empty_comment_or_open_the_pane() {
++        let mut a = app();
++        a.embed.host_comments = true;
++        assert_eq!(a.run("review.newComment", json!({})).unwrap()["pending"], "compose");
++        assert_eq!(a.execute("review.newComment", json!({"text": "  "})).unwrap()["pending"], "compose");
++        assert!(a.session.doc.comments.is_empty());
++        let _ = a.run("view.commentsPane", json!({"value": true}));
++        assert!(!a.session.view.comments_pane);
++        assert_eq!(a.embed.host_events, ["compose", "comments"]);
++        a.execute("review.newComment", json!({"text": "From the host"})).unwrap();
++        assert_eq!(a.session.doc.comments.len(), 1);
++    }
++
++    /// Turned-off commands are refused on every path, interface commands included, and Viewing
++    /// refuses edits but not saving or viewing.
++    #[test]
++    fn turned_off_commands_and_viewing_are_refused() {
++        let mut a = app();
++        a.session.disabled_commands = vec!["format.*".into(), "ui.backstage".into()];
++        assert!(a.run("format.bold", json!({})).is_err());
++        assert!(a.run("ui.backstage", json!({"value": true})).is_err());
++        assert!(!a.ui.backstage);
++        a.session.disabled_commands.clear();
++        a.run("ui.mode", json!({"mode": "viewing"})).unwrap();
++        assert!(a.run("text.insert", json!({"text": "x"})).is_err());
++        assert!(a.session.why_disabled("view.zoomIn").is_none());
++        a.run("ui.mode", json!({"mode": "reviewing"})).unwrap();
++        assert!(a.session.doc.settings.track_changes && !a.session.viewing);
++    }
+ 
+     #[test]
+     fn switches_read_from_camel_case_and_keep_pending_events() {
+diff --git a/crates/ui-egui/src/print_page.rs b/crates/ui-egui/src/print_page.rs
+index 7e9f8338..446f60d5 100644
+--- a/crates/ui-egui/src/print_page.rs
++++ b/crates/ui-egui/src/print_page.rs
+@@ -447,9 +447,24 @@ pub fn export_formats(app: &mut WordApp, ui: &mut Ui) {
+         Text::new(app.export_error.clone()).show(ui);
+     }
+     // Each format is a button across the column, its name at the reading start, as production's 320 pt rows.
++    // A host page may hide, rename, disable (with its reason) or take over each format: `export.<format>` items.
+     for &(label, ext) in EXPORT_FORMATS {
+-        if clicked(&Button::new(tl!(label)).id_salt(ext).sizing(Sizing::FillWidth).align(HAlign::Start).show(ui)) {
+-            app.export_dialog(ext);
++        let item = crate::embed::FileMenuItem::find(&app.embed.file_menu, &format!("export.{ext}")).cloned();
++        if item.as_ref().is_some_and(|i| i.hidden) {
++            continue;
++        }
++        let name = item.as_ref().filter(|i| !i.label.is_empty()).map_or_else(|| tl!(label).to_string(), |i| i.label.clone());
++        let disabled = item.as_ref().map(|i| i.disabled.clone()).unwrap_or_default();
++        let mut button = Button::new(name).id_salt(ext).sizing(Sizing::FillWidth).align(HAlign::Start).enabled(disabled.is_empty());
++        if !disabled.is_empty() {
++            button = button.tooltip(disabled);
++        }
++        if clicked(&button.show(ui)) {
++            if item.is_some_and(|i| i.host) {
++                app.embed.event(format!("file:export.{ext}"));
++            } else {
++                app.export_dialog(ext);
++            }
+         }
+     }
+     // Linux and the BSDs (#3535): WordCraft's own browser when the system dialog doesn't appear.

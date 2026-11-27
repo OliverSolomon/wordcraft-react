@@ -271,7 +271,13 @@ pub fn wheel_events(delta: Vec2) -> Vec<Event> {
     let n = (delta.length() / STEP).ceil().max(1.0) as usize;
     let part = delta / n as f32;
     (0..n)
-        .map(|_| Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: part, phase: TouchPhase::Move, modifiers: egui::Modifiers::NONE })
+        .map(|_| Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: part,
+            phase: TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+            source: egui::MouseWheelSource::Trackpad,
+        })
         .collect()
 }
 

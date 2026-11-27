@@ -76,6 +76,17 @@ const ready = async (page) => {
   await page.waitForTimeout(2500);
 };
 const info = (page) => page.evaluate(() => window.wordcraft.selectionInfo());
+/** The selection info once the page has stopped moving (the canvas eases a scroll in), up to 4s. */
+async function settled(page) {
+  let last = JSON.stringify(await info(page));
+  for (let i = 0; i < 20; i++) {
+    await page.waitForTimeout(200);
+    const now = JSON.stringify(await info(page));
+    if (now === last) break;
+    last = now;
+  }
+  return JSON.parse(last);
+}
 const canvasBox = (page) => page.evaluate(() => {
   const r = window.wordcraft.canvas.getBoundingClientRect();
   return { x: r.x, y: r.y, width: r.width, height: r.height };
@@ -101,6 +112,30 @@ await phone('pixel', { ...devices['Pixel 7'], deviceScaleFactor: 1 }, async (pag
   console.log('  view', JSON.stringify({ mode: view.mode, zoom: view.zoom }));
   await page.screenshot({ path: 'smoke-mobile-1-start.png' });
 
+  // Room to scroll: in Web Layout the sample ends about a screen down, and the canvas stops at
+  // the end of the document, so a long drag would hit the bottom before it finished.
+  await page.evaluate(() => {
+    const w = window.wordcraft;
+    w.execute('caret.docEnd');
+    for (let i = 0; i < 30; i++) {
+      w.execute('text.newParagraph');
+      w.execute('text.insert', { text: `Extra paragraph ${i + 1}, so the page has room to scroll on a phone.` });
+    }
+    w.execute('caret.docStart');
+  });
+  await settled(page);
+
+  // Diagnostic: how far a plain 200px wheel moves the text, for comparison with the drag below.
+  {
+    const a = await settled(page);
+    await page.mouse.move(box.x + 200, box.y + 400);
+    await page.mouse.wheel(0, 200);
+    const b = await settled(page);
+    await page.mouse.wheel(0, -200);
+    const c = await settled(page);
+    console.log('  wheel 200 moved the caret', a.rect?.y, '->', b.rect?.y, '->', c.rect?.y);
+  }
+
   // Tap: the caret moves to the tapped spot.
   const before = await info(page);
   await touch.tap(box.x + 120, box.y + 260);
@@ -111,14 +146,16 @@ await phone('pixel', { ...devices['Pixel 7'], deviceScaleFactor: 1 }, async (pag
 
   // Drag: the page scrolls (the caret's rectangle moves up with it) instead of selecting.
   await touch.drag(box.x + 200, box.y + 500, 0, -320, { steps: 16 });
-  await page.waitForTimeout(900);
-  const scrolled = await info(page);
+  await page.waitForTimeout(400);
+  const scrolled = await settled(page);
+  await page.screenshot({ path: 'smoke-mobile-2-scrolled.png' });
+  const viewAfter = await page.evaluate(() => window.wordcraft.execute('view.state'));
+  console.log('  drag', JSON.stringify({ tapped: tapped.rect, rect: scrolled.rect, page: scrolled.page, screen: scrolled.screen, scrolled: scrolled.scrolled, before: view, after: viewAfter }));
   assert.equal(scrolled.collapsed, true, 'a drag does not select');
   // The title bar slides away during the drag and the page grows into its 48px, so the page
   // itself scrolls 48px less while the text stays under the finger.
   assert.ok(scrolled.scrolled <= -260, `touch scrolled ${scrolled.scrolled}`);
   assert.ok(!scrolled.rect || scrolled.rect.y < tapped.rect.y - 250, `content moved up: ${tapped.rect.y} -> ${scrolled.rect?.y}`);
-  await page.screenshot({ path: 'smoke-mobile-2-scrolled.png' });
   // Shy chrome: scrolling down hid the title bar.
   assert.equal(await page.locator('.wcm-top[data-hidden]').count(), 1, 'title bar slid away');
   await touch.drag(box.x + 200, box.y + 300, 0, 120, { steps: 8 });

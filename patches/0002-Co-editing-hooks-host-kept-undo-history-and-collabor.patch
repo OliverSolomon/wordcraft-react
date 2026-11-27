@@ -1,26 +1,23 @@
-From 5a8eaea49ab34454059d7b964c5fef4e9f2dd9e6 Mon Sep 17 00:00:00 2001
-From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
-Date: Sat, 10 Oct 2026 19:48:53 +0300
-Subject: [PATCH 2/8] Co-editing hooks: host-kept undo history and
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliver Solomon <47696354+OliverSolomon@users.noreply.github.com>
+Date: Fri, 27 Nov 2026 08:37:24 +0000
+Subject: [PATCH 2/6] Co-editing hooks: host-kept undo history and
  collaborators in the title bar
 
-- Session::external_history lets a host that keeps its own history (real-time
-  co-editing, where Undo takes back only this person's changes) take Undo and
-  Redo: they queue in history_requests, and can_undo/can_redo report
-  external_can, so the Quick Access Toolbar and Ctrl+Z keep working.
-- WordApp::collaborators lists the other people editing; the title bar shows
-  them beside the account avatar, as Word does.
 ---
- crates/engine/src/session.rs | 28 ++++++++++++++++++++++++++++
- crates/ui-egui/src/chrome.rs | 10 ++++++++++
- crates/ui-egui/src/lib.rs    | 10 ++++++++++
- 3 files changed, 48 insertions(+)
+ crates/engine/src/session.rs           |  7 +++++++
+ crates/engine/src/session/documents.rs |  3 +++
+ crates/engine/src/session/history.rs   | 14 ++++++++++++++
+ crates/engine/src/session/lifecycle.rs |  3 +++
+ crates/engine/src/session/snapshot.rs  |  4 ++++
+ crates/ui-egui/src/chrome/title_bar.rs |  9 +++++++++
+ 6 files changed, 40 insertions(+)
 
 diff --git a/crates/engine/src/session.rs b/crates/engine/src/session.rs
-index 4f16aea..0026d3a 100644
+index e448d962..6345a442 100644
 --- a/crates/engine/src/session.rs
 +++ b/crates/engine/src/session.rs
-@@ -439,6 +439,13 @@ pub struct Session {
+@@ -226,6 +226,13 @@ pub struct Session {
      /// `None` is WordCraft's default, US English. The front end sets it from the interface
      /// language with [`Session::set_editing_language`] (a Polish interface writes Polish).
      pub editing_lang: Option<String>,
@@ -34,45 +31,54 @@ index 4f16aea..0026d3a 100644
      /// Editing inside an equation: which one and the caret in it.
      pub math: Option<MathEdit>,
      /// Equations are typed in LaTeX rather than the linear format.
-@@ -641,6 +648,9 @@ impl Session {
-             keymap: crate::KeyMap::default(),
-             ribbon: crate::RibbonLayout::default(),
-             editing_lang: None,
-+            external_history: false,
-+            history_requests: Vec::new(),
-+            external_can: (false, false),
-             read_aloud: Default::default(),
-             password: None,
-             #[cfg(not(target_arch = "wasm32"))]
-@@ -895,9 +905,15 @@ impl Session {
-         self.typing_open = false;
+diff --git a/crates/engine/src/session/documents.rs b/crates/engine/src/session/documents.rs
+index 40fdc8fd..6dae8161 100644
+--- a/crates/engine/src/session/documents.rs
++++ b/crates/engine/src/session/documents.rs
+@@ -280,6 +280,9 @@ impl Session {
+             findings: _,
+             ribbon: _,
+             editing_lang: _,
++            external_history: _,
++            history_requests: _,
++            external_can: _,
+             math_latex: _,
+             math_normal_text: _,
+             last_highlight: _,
+diff --git a/crates/engine/src/session/history.rs b/crates/engine/src/session/history.rs
+index e625acfb..8392a979 100644
+--- a/crates/engine/src/session/history.rs
++++ b/crates/engine/src/session/history.rs
+@@ -133,10 +133,16 @@ impl Session {
      }
+ 
      pub fn can_undo(&self) -> bool {
 +        if self.external_history {
 +            return self.external_can.0;
 +        }
          !self.history.is_empty()
      }
+ 
      pub fn can_redo(&self) -> bool {
 +        if self.external_history {
 +            return self.external_can.1;
 +        }
          !self.redo.is_empty()
      }
-     pub fn undo_label(&self) -> Option<&str> {
-@@ -930,6 +946,10 @@ impl Session {
-     }
+ 
+@@ -206,6 +212,10 @@ impl Session {
+     /// the redo snapshot, replaces the body identity, refreshes equation editing and touches layout.
      pub fn undo(&mut self) -> bool {
          self.typing_open = false;
 +        if self.external_history {
 +            self.history_requests.push(false);
 +            return self.external_can.0;
 +        }
-         let Some(u) = self.history.pop().map(Arc::unwrap_or_clone) else { return false };
-         let cur = Undo {
-             label: u.label.clone(),
-@@ -949,6 +969,10 @@ impl Session {
-     }
+         // Undoing the automatic capitalisation's own step makes its word an exception; any
+         // other Undo forgets the capital.
+         let steps = self.history.len() as u64 + self.undo_evicted;
+@@ -239,6 +249,10 @@ impl Session {
+     /// refreshing equation editing and touching layout.
      pub fn redo(&mut self) -> bool {
          self.typing_open = false;
 +        if self.external_history {
@@ -82,7 +88,25 @@ index 4f16aea..0026d3a 100644
          let Some(u) = self.redo.pop().map(Arc::unwrap_or_clone) else { return false };
          let cur = Undo {
              label: u.label.clone(),
-@@ -1086,6 +1110,10 @@ impl Session {
+diff --git a/crates/engine/src/session/lifecycle.rs b/crates/engine/src/session/lifecycle.rs
+index d7eefdbc..4b31d909 100644
+--- a/crates/engine/src/session/lifecycle.rs
++++ b/crates/engine/src/session/lifecycle.rs
+@@ -166,6 +166,9 @@ impl Session {
+             findings: None,
+             ribbon: crate::RibbonLayout::default(),
+             editing_lang: None,
++            external_history: false,
++            history_requests: Vec::new(),
++            external_can: (false, false),
+             read_aloud: Default::default(),
+             windows: Default::default(),
+             password,
+diff --git a/crates/engine/src/session/snapshot.rs b/crates/engine/src/session/snapshot.rs
+index fb584c13..ddd25b39 100644
+--- a/crates/engine/src/session/snapshot.rs
++++ b/crates/engine/src/session/snapshot.rs
+@@ -159,6 +159,10 @@ impl Session {
              ribbon: _,
              // A preference for new documents, like `prefs`: not part of this document.
              editing_lang: _,
@@ -93,59 +117,23 @@ index 4f16aea..0026d3a 100644
              // Equation editing mode, like `view`: not part of the document or its history.
              math: _,
              math_latex: _,
-diff --git a/crates/ui-egui/src/chrome.rs b/crates/ui-egui/src/chrome.rs
-index c057992..c7fa7fe 100644
---- a/crates/ui-egui/src/chrome.rs
-+++ b/crates/ui-egui/src/chrome.rs
-@@ -292,6 +292,16 @@ pub fn title_bar(app: &mut WordApp, ui: &mut Ui) {
-                     if resp.on_hover_text(format!("{} — set your name in File › Options", app.session.author)).clicked() {
-                         let _ = app.run("ui.backstage", json!({"value": true, "page": "options", "pane": "general"}));
-                     }
-+                    // People editing at the same time, as in Word's co-authoring.
-+                    for c in app.collaborators.iter().take(6) {
-+                        let (r, resp) = ui.allocate_exact_size(vec2(24.0, 26.0), Sense::hover());
-+                        let fill = egui::Color32::from_rgb(c.color[0], c.color[1], c.color[2]);
-+                        ui.painter().circle_filled(r.center(), 11.0, fill);
-+                        ui.painter().circle_stroke(r.center(), 11.0, Stroke::new(1.5, t.title_bar));
-+                        let initials: String = c.name.split_whitespace().filter_map(|w| w.chars().next()).take(2).collect();
-+                        ui.painter().text(r.center(), Align2::CENTER_CENTER, initials, semibold(9.5), egui::Color32::WHITE);
-+                        resp.on_hover_text(format!("{} is editing", c.name));
-+                    }
-                     ui.add_space(8.0);
-                     if app.ui.show_discord {
-                         let (r, resp) = ui.allocate_exact_size(vec2(84.0, 22.0), Sense::click());
-diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index 738ed37..4c8c60e 100644
---- a/crates/ui-egui/src/lib.rs
-+++ b/crates/ui-egui/src/lib.rs
-@@ -422,6 +422,13 @@ fn migrate_units(v: &mut Value) {
+diff --git a/crates/ui-egui/src/chrome/title_bar.rs b/crates/ui-egui/src/chrome/title_bar.rs
+index 90cdfb33..63059da5 100644
+--- a/crates/ui-egui/src/chrome/title_bar.rs
++++ b/crates/ui-egui/src/chrome/title_bar.rs
+@@ -279,6 +279,15 @@ fn trailing(app: &mut WordApp, ui: &mut Ui, step: usize) -> Option<egui::Rect> {
+             let _ = app.run("ui.discord", json!({}));
+         }
      }
- }
- 
-+/// Someone else editing the document at the same time (shown in the title bar, as Word does).
-+#[derive(Clone, Debug, PartialEq)]
-+pub struct Collaborator {
-+    pub name: String,
-+    pub color: [u8; 3],
-+}
-+
- /// The application.
- pub struct WordApp {
-     pub session: Session,
-@@ -509,6 +516,8 @@ pub struct WordApp {
-     escape_free: bool,
-     pub quit_requested: bool,
-     pub autosave: bool,
-+    /// Other people editing now (real-time co-editing), shown beside the account avatar.
-+    pub collaborators: Vec<Collaborator>,
-     pub word_count: (u64, usize),
-     last_autosave: f64,
-     /// The tab shown before the Equation tab came up (restored when editing ends).
-@@ -624,6 +633,7 @@ impl WordApp {
-             escape_free: false,
-             quit_requested: false,
-             autosave: true,
-+            collaborators: Vec::new(),
-             word_count: (0, 0),
-             last_autosave: 0.0,
-             equation_prev_tab: None,
++    // People editing at the same time, in the colours of their carets, as in co-authoring.
++    let shown = if app.embed.hide_presence { 0 } else { 6 };
++    for c in app.embed.collaborators.iter().take(shown) {
++        let out = Avatar::new(c.name.clone())
++            .fill(c.color)
++            .tooltip(TooltipSpec::new(crate::i18n::fmt(tl!("{name} is editing"), &[("name", &c.name)])))
++            .show(ui);
++        rects.push(out.response.rect);
++    }
+     let initials: String = app.session.user_initials().chars().take(2).collect();
+     let out = Avatar::new(app.session.author.clone())
+         .initials(initials)
