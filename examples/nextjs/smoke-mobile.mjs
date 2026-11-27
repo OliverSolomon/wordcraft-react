@@ -112,6 +112,19 @@ await phone('pixel', { ...devices['Pixel 7'], deviceScaleFactor: 1 }, async (pag
   console.log('  view', JSON.stringify({ mode: view.mode, zoom: view.zoom }));
   await page.screenshot({ path: 'smoke-mobile-1-start.png' });
 
+  // Room to scroll: in Web Layout the sample ends about a screen down, and the canvas stops at
+  // the end of the document, so a long drag would hit the bottom before it finished.
+  await page.evaluate(() => {
+    const w = window.wordcraft;
+    w.execute('caret.docEnd');
+    for (let i = 0; i < 30; i++) {
+      w.execute('text.newParagraph');
+      w.execute('text.insert', { text: `Extra paragraph ${i + 1}, so the page has room to scroll on a phone.` });
+    }
+    w.execute('caret.docStart');
+  });
+  await settled(page);
+
   // Tap: the caret moves to the tapped spot.
   const before = await info(page);
   await touch.tap(box.x + 120, box.y + 260);
