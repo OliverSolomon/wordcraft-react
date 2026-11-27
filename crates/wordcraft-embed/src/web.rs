@@ -190,6 +190,17 @@ pub async fn mount(
                 if let Err(e) = embed::install(&ctx, spec, &wordcraft_ui_egui::ui_fonts(lang)) {
                     log::error!("wordcraft-embed: the UI runtime did not install: {e:?}");
                 }
+                // The font box lists the picker catalog's fonts. Upstream starts its first scan on a
+                // thread, which a browser can't spawn, so the box would say "Loading fonts…" for
+                // good: the bundled faces join it here and the scan runs now (there are no font
+                // folders to read in a browser, so it is quick).
+                let catalog = craft::font_manager::Catalog::global();
+                for bytes in wordcraft_fonts::bundled() {
+                    if let Err(e) = catalog.add_bytes(bytes.to_vec(), craft::font_manager::Source::Bundled, &Default::default()) {
+                        log::warn!("a bundled font isn't in the font box: {e}");
+                    }
+                }
+                let _ = catalog.families();
                 // Files: the browser's pickers; saves go to the page's onSave, or download.
                 let browser = Arc::new(BrowserFiles::new(waker(&ctx)));
                 let files: Arc<dyn Files> = Arc::new(EmbedFiles::new(browser, creator_shared.key));
