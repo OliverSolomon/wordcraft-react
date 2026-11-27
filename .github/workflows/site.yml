@@ -24,7 +24,7 @@ concurrency:
 jobs:
   build:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       skip: ${{ steps.pkg.outputs.skip }}
     steps:
@@ -76,7 +76,7 @@ jobs:
   deploy:
     needs: build
     if: needs.build.outputs.skip != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
