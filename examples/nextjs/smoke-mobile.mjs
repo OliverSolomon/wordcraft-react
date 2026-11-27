@@ -76,6 +76,17 @@ const ready = async (page) => {
   await page.waitForTimeout(2500);
 };
 const info = (page) => page.evaluate(() => window.wordcraft.selectionInfo());
+/** The selection info once the page has stopped moving (the canvas eases a scroll in), up to 4s. */
+async function settled(page) {
+  let last = JSON.stringify(await info(page));
+  for (let i = 0; i < 20; i++) {
+    await page.waitForTimeout(200);
+    const now = JSON.stringify(await info(page));
+    if (now === last) break;
+    last = now;
+  }
+  return JSON.parse(last);
+}
 const canvasBox = (page) => page.evaluate(() => {
   const r = window.wordcraft.canvas.getBoundingClientRect();
   return { x: r.x, y: r.y, width: r.width, height: r.height };
@@ -111,8 +122,8 @@ await phone('pixel', { ...devices['Pixel 7'], deviceScaleFactor: 1 }, async (pag
 
   // Drag: the page scrolls (the caret's rectangle moves up with it) instead of selecting.
   await touch.drag(box.x + 200, box.y + 500, 0, -320, { steps: 16 });
-  await page.waitForTimeout(900);
-  const scrolled = await info(page);
+  await page.waitForTimeout(400);
+  const scrolled = await settled(page);
   assert.equal(scrolled.collapsed, true, 'a drag does not select');
   // The title bar slides away during the drag and the page grows into its 48px, so the page
   // itself scrolls 48px less while the text stays under the finger.
