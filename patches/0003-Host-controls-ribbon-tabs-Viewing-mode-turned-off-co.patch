@@ -1,57 +1,118 @@
-From 4f4deb7ca9007c20ff4e08e96531c6da64fe7cc6 Mon Sep 17 00:00:00 2001
-From: ndamathia <47696354+OliverSolomon@users.noreply.github.com>
-Date: Sun, 11 Oct 2026 06:53:25 +0300
-Subject: [PATCH 3/8] Host controls: ribbon tabs, Viewing mode, turned-off
- commands, font box sections, comment click
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliver Solomon <47696354+OliverSolomon@users.noreply.github.com>
+Date: Fri, 27 Nov 2026 08:41:15 +0000
+Subject: [PATCH 3/6] Host controls: ribbon tabs, Viewing mode, turned-off
+ commands, web fonts, AI button
 
-- UiState::hidden_tabs: an embedding host chooses which ribbon tabs show
-  (hiding File also closes the File view).
-- Word's Editing / Reviewing / Viewing switch: Viewing (Session::viewing)
-  refuses every command that changes the document except File ones.
-- Session::disabled_commands: commands a host turned off (ids or prefix*),
-  greyed in the ribbon and refused by Session::run and WordApp::execute.
-- Font box: Theme Fonts, Recently Used Fonts (remembered in UiState) and All
-  Fonts sections, as in Word; WordApp::cloud_fonts lists fonts the host can
-  fetch on demand, picked ones queue in font_requests, fonts_changed relayouts.
-- Clicking a comment card in the Comments pane goes to the text it's about.
+- Session::host_block refuses what a host page turned off (exact ids or
+  prefix*) and, in Viewing mode, anything that changes the document; it
+  greys controls through why_disabled and holds for interface commands.
+- ui.mode switches Editing, Reviewing and Viewing from the ribbon.
+- The host may hide ribbon tabs, File included.
+- Fonts the host can fetch are listed as served in the font box; a pick
+  or a rest asks the host for them, and fonts_changed relays them out.
+- An AI button beside Comments queues an ai event (ui.ai).
 ---
- crates/engine/src/session.rs   | 28 ++++++++++++
- crates/fonts/src/fontdb.rs     |  7 +++
- crates/ui-egui/src/lib.rs      | 84 ++++++++++++++++++++++++++++++++++
- crates/ui-egui/src/panes.rs    | 10 +++-
- crates/ui-egui/src/previews.rs |  5 ++
- crates/ui-egui/src/ribbon.rs   | 39 +++++++++++-----
- crates/ui-egui/src/widgets.rs  | 21 ++++++++-
- 7 files changed, 179 insertions(+), 15 deletions(-)
+ ATTRIBUTION.md                          |  1 +
+ crates/engine/src/session.rs            |  4 ++
+ crates/engine/src/session/documents.rs  |  2 +
+ crates/engine/src/session/lifecycle.rs  |  2 +
+ crates/engine/src/session/run.rs        |  3 ++
+ crates/engine/src/session/snapshot.rs   | 21 ++++++++++
+ crates/ui-egui/icons/aiSparkle.svg      |  4 ++
+ crates/ui-egui/src/app/command_board.rs |  2 +
+ crates/ui-egui/src/app/commands.rs      | 28 +++++++++++++
+ crates/ui-egui/src/icons.rs             |  1 +
+ crates/ui-egui/src/ribbon.rs            | 53 ++++++++++++++++---------
+ crates/ui-egui/src/widgets/font_box.rs  | 23 ++++++++++-
+ 12 files changed, 124 insertions(+), 20 deletions(-)
+ create mode 100644 crates/ui-egui/icons/aiSparkle.svg
 
+diff --git a/ATTRIBUTION.md b/ATTRIBUTION.md
+index ba9d73ca..66b1b813 100644
+--- a/ATTRIBUTION.md
++++ b/ATTRIBUTION.md
+@@ -126,6 +126,7 @@ The UI icons are SVG files in `crates/ui-egui/icons/`, one row each below. Gener
+ | `crates/ui-egui/icons/columns.svg` | WordCraft contributors | original: exported from WordCraft's own code-drawn icons (`crates/ui-egui/src/icons.rs` before the craft port), text glyphs redrawn as paths | MIT OR Apache-2.0 | UI icon |
+ | `crates/ui-egui/icons/combine.svg` | WordCraft contributors | original: exported from WordCraft's own code-drawn icons (`crates/ui-egui/src/icons.rs` before the craft port), text glyphs redrawn as paths | MIT OR Apache-2.0 | UI icon |
+ | `crates/ui-egui/icons/comment.svg` | WordCraft contributors | original: exported from WordCraft's own code-drawn icons (`crates/ui-egui/src/icons.rs` before the craft port), text glyphs redrawn as paths | MIT OR Apache-2.0 | UI icon |
++| `crates/ui-egui/icons/aiSparkle.svg` | wordcraft-react contributors | original: drawn for the embedding's AI button | MIT OR Apache-2.0 | UI icon |
+ | `crates/ui-egui/icons/compare.svg` | WordCraft contributors | original: exported from WordCraft's own code-drawn icons (`crates/ui-egui/src/icons.rs` before the craft port), text glyphs redrawn as paths | MIT OR Apache-2.0 | UI icon |
+ | `crates/ui-egui/icons/copy.svg` | WordCraft contributors | original: exported from WordCraft's own code-drawn icons (`crates/ui-egui/src/icons.rs` before the craft port), text glyphs redrawn as paths | MIT OR Apache-2.0 | UI icon |
+ | `crates/ui-egui/icons/coverPage.svg` | WordCraft contributors | original: exported from WordCraft's own code-drawn icons (`crates/ui-egui/src/icons.rs` before the craft port), text glyphs redrawn as paths | MIT OR Apache-2.0 | UI icon |
 diff --git a/crates/engine/src/session.rs b/crates/engine/src/session.rs
-index 0026d3a..9756beb 100644
+index 6345a442..c02be25a 100644
 --- a/crates/engine/src/session.rs
 +++ b/crates/engine/src/session.rs
-@@ -446,6 +446,10 @@ pub struct Session {
+@@ -233,6 +233,10 @@ pub struct Session {
      pub external_history: bool,
      pub history_requests: Vec<bool>,
      pub external_can: (bool, bool),
-+    /// Word's Viewing mode: read, navigate, copy, print and export, but no changes.
++    /// Viewing mode: read, navigate, copy, print and export, but no changes.
 +    pub viewing: bool,
-+    /// Commands an embedding host turned off: exact ids, or prefixes ending in `*` (`file.*`).
++    /// Commands a host page turned off: exact ids, or prefixes ending in `*` (`file.*`).
 +    pub disabled_commands: Vec<String>,
      /// Editing inside an equation: which one and the caret in it.
      pub math: Option<MathEdit>,
      /// Equations are typed in LaTeX rather than the linear format.
-@@ -651,6 +655,8 @@ impl Session {
+diff --git a/crates/engine/src/session/documents.rs b/crates/engine/src/session/documents.rs
+index 6dae8161..ca9165b9 100644
+--- a/crates/engine/src/session/documents.rs
++++ b/crates/engine/src/session/documents.rs
+@@ -283,6 +283,8 @@ impl Session {
+             external_history: _,
+             history_requests: _,
+             external_can: _,
++            viewing: _,
++            disabled_commands: _,
+             math_latex: _,
+             math_normal_text: _,
+             last_highlight: _,
+diff --git a/crates/engine/src/session/lifecycle.rs b/crates/engine/src/session/lifecycle.rs
+index 4b31d909..d28863fb 100644
+--- a/crates/engine/src/session/lifecycle.rs
++++ b/crates/engine/src/session/lifecycle.rs
+@@ -169,6 +169,8 @@ impl Session {
              external_history: false,
              history_requests: Vec::new(),
              external_can: (false, false),
 +            viewing: false,
 +            disabled_commands: Vec::new(),
              read_aloud: Default::default(),
-             password: None,
-             #[cfg(not(target_arch = "wasm32"))]
-@@ -904,6 +910,23 @@ impl Session {
-     pub fn close_typing(&mut self) {
-         self.typing_open = false;
+             windows: Default::default(),
+             password,
+diff --git a/crates/engine/src/session/run.rs b/crates/engine/src/session/run.rs
+index 3f5ed3fe..ea1ee08f 100644
+--- a/crates/engine/src/session/run.rs
++++ b/crates/engine/src/session/run.rs
+@@ -116,6 +116,9 @@ impl Session {
+         if let Some(why) = (spec.enabled)(self) {
+             return Err(CmdError::Disabled(format!("{id}: {why}")));
+         }
++        if let Some(why) = self.host_block(id, spec.mutates) {
++            return Err(CmdError::Disabled(format!("{id}: {why}")));
++        }
+         // Restrict Editing: refused outright, or allowed as long as it only edits the exceptions.
+         let guard = if spec.mutates { crate::cmd::protect::check_before(self, id, params)? } else { false };
+         // Quick Parts aren't part of the document, so a refused edit puts them back itself (the Spike).
+diff --git a/crates/engine/src/session/snapshot.rs b/crates/engine/src/session/snapshot.rs
+index ddd25b39..097ad468 100644
+--- a/crates/engine/src/session/snapshot.rs
++++ b/crates/engine/src/session/snapshot.rs
+@@ -163,6 +163,9 @@ impl Session {
+             external_history: _,
+             history_requests: _,
+             external_can: _,
++            // The host's settings, like `prefs`: not part of the document.
++            viewing: _,
++            disabled_commands: _,
+             // Equation editing mode, like `view`: not part of the document or its history.
+             math: _,
+             math_latex: _,
+@@ -271,11 +274,29 @@ impl Session {
+         }
      }
+ 
 +    /// Why the host's settings refuse command `id` (Viewing mode, or a command it turned off), or
 +    /// `None` when it may run. `mutates` is whether the command changes the document.
 +    pub fn host_block(&self, id: &str, mutates: bool) -> Option<&'static str> {
@@ -69,366 +130,207 @@ index 0026d3a..9756beb 100644
 +        None
 +    }
 +
-     pub fn can_undo(&self) -> bool {
-         if self.external_history {
-             return self.external_can.0;
-@@ -1114,6 +1137,8 @@ impl Session {
-             external_history: _,
-             history_requests: _,
-             external_can: _,
-+            viewing: _,
-+            disabled_commands: _,
-             // Equation editing mode, like `view`: not part of the document or its history.
-             math: _,
-             math_latex: _,
-@@ -1199,6 +1224,9 @@ impl Session {
-         if let Some(why) = (spec.enabled)(self) {
-             return Err(CmdError::Disabled(format!("{id}: {why}")));
-         }
-+        if let Some(why) = self.host_block(id, spec.mutates) {
-+            return Err(CmdError::Disabled(format!("{id}: {why}")));
-+        }
-         // Restrict Editing: refused outright, or allowed as long as it only edits the exceptions.
-         let guard = if spec.mutates { crate::cmd::protect::check_before(self, id, params)? } else { false };
-         if spec.mutates && self.doc.settings.protection.as_deref() == Some("trackedChanges") {
-diff --git a/crates/fonts/src/fontdb.rs b/crates/fonts/src/fontdb.rs
-index 5f07295..381f7b3 100644
---- a/crates/fonts/src/fontdb.rs
-+++ b/crates/fonts/src/fontdb.rs
-@@ -1098,6 +1098,13 @@ impl FontDb {
-                 added += 1;
-             }
-         }
-+        drop(faces);
-+        if added > 0 {
-+            // A family that resolved to a substitute may be here now: forget fallback choices
-+            // and start a new generation, as user fonts do, so `word::resolve` looks again.
-+            self.fallbacks.write().unwrap_or_else(|e| e.into_inner()).map.clear();
-+            self.generation.fetch_add(1, Ordering::AcqRel);
-+        }
-         added
+     /// Why command `id` can't run now, for greying it out: its own `enabled` check, then what
+     /// Restrict Editing refuses outright. `None` when it can run (or doesn't exist).
+     pub fn why_disabled(&self, id: &str) -> Option<&'static str> {
+         let spec = self.registry.get(id)?;
+         (spec.enabled)(self)
++            .or_else(|| self.host_block(id, spec.mutates))
+             .or_else(|| crate::cmd::md_source::refusal(self, id, spec.mutates))
+             .or_else(|| if spec.mutates { crate::cmd::protect::greyed_out(self, id, || self.protect_facts()) } else { None })
      }
- 
-diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index 4c8c60e..def55a4 100644
---- a/crates/ui-egui/src/lib.rs
-+++ b/crates/ui-egui/src/lib.rs
-@@ -267,6 +267,10 @@ pub struct UiState {
-     pub hide_title_bar: bool,
-     /// Embedded: hide the ribbon including its tab row (Word's "Auto-hide Ribbon").
-     pub hide_ribbon: bool,
-+    /// Embedded: ribbon tabs the host doesn't offer (`File`, `Home`, `Insert`, `Draw`, ...).
-+    pub hidden_tabs: Vec<String>,
-+    /// Fonts picked lately, newest first (Word's "Recently Used Fonts").
-+    pub recent_fonts: Vec<String>,
-     /// Editing preferences; the session owns them while running (see [`WordApp::prefs`]).
-     pub editing: wordcraft_engine::Prefs,
-     /// Read Aloud speed (1 = normal) and whether it skips citations and bibliographies.
-@@ -361,6 +365,8 @@ impl Default for UiState {
-             language: i18n::AUTO.into(),
-             hide_title_bar: false,
-             hide_ribbon: false,
-+            hidden_tabs: Vec::new(),
-+            recent_fonts: Vec::new(),
-             editing: wordcraft_engine::Prefs::default(),
-             read_aloud_rate: 1.0,
-             read_aloud_skip_citations: true,
-@@ -518,6 +524,12 @@ pub struct WordApp {
-     pub autosave: bool,
-     /// Other people editing now (real-time co-editing), shown beside the account avatar.
-     pub collaborators: Vec<Collaborator>,
-+    /// Font families the host can fetch on demand (web fonts), listed in the font box with the
-+    /// installed ones.
-+    pub cloud_fonts: Vec<String>,
-+    /// Families picked that aren't installed yet: the host fetches them, adds them with
-+    /// `FontDb::add_font`, then calls [`WordApp::fonts_changed`].
-+    pub font_requests: Vec<String>,
-     pub word_count: (u64, usize),
-     last_autosave: f64,
-     /// The tab shown before the Equation tab came up (restored when editing ends).
-@@ -634,6 +646,8 @@ impl WordApp {
-             quit_requested: false,
-             autosave: true,
-             collaborators: Vec::new(),
-+            cloud_fonts: Vec::new(),
-+            font_requests: Vec::new(),
-             word_count: (0, 0),
-             last_autosave: 0.0,
-             equation_prev_tab: None,
-@@ -842,6 +856,11 @@ impl WordApp {
-             self.status(e.clone());
-             return Err(e);
+diff --git a/crates/ui-egui/icons/aiSparkle.svg b/crates/ui-egui/icons/aiSparkle.svg
+new file mode 100644
+index 00000000..d3ba5f8b
+--- /dev/null
++++ b/crates/ui-egui/icons/aiSparkle.svg
+@@ -0,0 +1,4 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" width="20" height="20">
++  <path d="M9 2.5 C9.6 6.4 10.6 7.4 14.5 8 C10.6 8.6 9.6 9.6 9 13.5 C8.4 9.6 7.4 8.6 3.5 8 C7.4 7.4 8.4 6.4 9 2.5 Z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
++  <path d="M15 12 C15.3 13.8 15.7 14.2 17.5 14.5 C15.7 14.8 15.3 15.2 15 17 C14.7 15.2 14.3 14.8 12.5 14.5 C14.3 14.2 14.7 13.8 15 12 Z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>
++</svg>
+diff --git a/crates/ui-egui/src/app/command_board.rs b/crates/ui-egui/src/app/command_board.rs
+index a4ceb433..2de9d5d6 100644
+--- a/crates/ui-egui/src/app/command_board.rs
++++ b/crates/ui-egui/src/app/command_board.rs
+@@ -27,6 +27,8 @@ fn gate(app: &WordApp, id: &str) -> (bool, Option<&'static str>) {
+             let reason = app.session.why_disabled(id);
+             (reason.is_none(), reason)
          }
-+        if id.starts_with("ui.")
-+            && let Some(why) = self.session.host_block(id, false)
-+        {
++        // An interface command a host page turned off.
++        None if let Some(why) = app.session.host_block(id, false) => (false, Some(why)),
+         None if id.starts_with("ui.zotero.") => (app.zotero.busy.is_none() && !cfg!(target_arch = "wasm32"), None),
+         None if id == "ui.linkTextBox" => (command_enabled(app, "shape.link"), None),
+         None if id == "ui.crop" => (crate::crop::can_toggle(app), None),
+diff --git a/crates/ui-egui/src/app/commands.rs b/crates/ui-egui/src/app/commands.rs
+index 2c7b3363..fed1bc54 100644
+--- a/crates/ui-egui/src/app/commands.rs
++++ b/crates/ui-egui/src/app/commands.rs
+@@ -116,6 +116,12 @@ impl WordApp {
+         if let Some(error) = self.document_required_error(id) {
+             return Err(error);
+         }
++        // What a host page turned off (and Viewing mode) holds for interface commands and for the
++        // web's save path too, which doesn't go through the session.
++        let mutates = self.session.registry.get(id).is_some_and(|s| s.mutates);
++        if let Some(why) = self.session.host_block(id, mutates) {
 +            return Err(format!("{id}: {why}"));
 +        }
          if let Some(r) = self.ui_command(id, &params) {
              return r;
          }
-@@ -1360,6 +1379,22 @@ impl WordApp {
-                 self.canvas.want_focus = true;
+@@ -615,6 +621,28 @@ impl WordApp {
                  json!({"pending": "contextMenu"})
              }
-+            // Word's Editing / Reviewing / Viewing switch.
+             "ui.paneDock" => return Some(panes::dock_command(self, p)),
++            // The AI button a host page offers: the page answers it.
++            "ui.ai" => {
++                self.embed.event("ai");
++                json!({"pending": "ai"})
++            }
++            // The Editing / Reviewing / Viewing switch.
 +            "ui.mode" => {
-+                let mode = s("mode").unwrap_or("editing");
++                let mode = p.get("mode").and_then(Value::as_str).unwrap_or("editing");
 +                let (viewing, track) = match mode {
 +                    "viewing" => (true, self.session.doc.settings.track_changes),
 +                    "reviewing" => (false, true),
 +                    _ => (false, false),
 +                };
 +                self.session.viewing = viewing;
-+                if !viewing && self.session.doc.settings.track_changes != track {
-+                    if let Err(e) = self.session.run("review.trackChanges", &json!({"value": track})) {
-+                        return Some(Err(e.to_string()));
-+                    }
++                if !viewing
++                    && self.session.doc.settings.track_changes != track
++                    && let Err(e) = self.session.run("review.trackChanges", &json!({"value": track}))
++                {
++                    return Some(Err(e.to_string()));
 +                }
 +                json!({"mode": mode})
 +            }
              "ui.collapseRibbon" => {
                  self.ui.ribbon_collapsed = !self.ui.ribbon_collapsed;
                  json!({"collapsed": self.ui.ribbon_collapsed})
-@@ -1925,6 +1960,52 @@ impl WordApp {
-         self.session.path.is_some() && self.session.path == self.autosave_path
-     }
+diff --git a/crates/ui-egui/src/icons.rs b/crates/ui-egui/src/icons.rs
+index f9d38127..ff476f82 100644
+--- a/crates/ui-egui/src/icons.rs
++++ b/crates/ui-egui/src/icons.rs
+@@ -75,6 +75,7 @@ static WORDCRAFT_ICONS_TABLE: &[(&str, &[u8])] = &[
+     ("columns", include_bytes!("../icons/columns.svg")),
+     ("combine", include_bytes!("../icons/combine.svg")),
+     ("comment", include_bytes!("../icons/comment.svg")),
++    ("wordcraft.aiSparkle", include_bytes!("../icons/aiSparkle.svg")),
+     ("compare", include_bytes!("../icons/compare.svg")),
+     ("wordcraft.copy", include_bytes!("../icons/copy.svg")),
+     ("coverPage", include_bytes!("../icons/coverPage.svg")),
+diff --git a/crates/ui-egui/src/ribbon.rs b/crates/ui-egui/src/ribbon.rs
+index a61f9c4a..b45bc4bf 100644
+--- a/crates/ui-egui/src/ribbon.rs
++++ b/crates/ui-egui/src/ribbon.rs
+@@ -113,8 +113,9 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) -> RibbonOutput<String> {
+     // contextual ones (the Outlining tab right after File). A contextual tab (Table, Picture
+     // Format) may be stored while the selection moved away, and a tab may have been hidden.
+     let user_tabs = app.session.ribbon.tabs().into_owned();
+-    let mut names: Vec<(String, bool)> = vec![("File".to_string(), false)];
+-    names.extend(user_tabs.iter().filter(|e| !e.hidden).map(|e| (e.name.clone(), e.custom)));
++    // A host page may leave tabs out (`Embed::hidden_tabs`), File included.
++    let mut names: Vec<(String, bool)> = if app.embed.tab_shown("File") { vec![("File".to_string(), false)] } else { Vec::new() };
++    names.extend(user_tabs.iter().filter(|e| !e.hidden && app.embed.tab_shown(&e.name)).map(|e| (e.name.clone(), e.custom)));
+     for ct in contextual_tabs(&app.session) {
+         if ct == "Outlining" {
+             names.insert(1.min(names.len()), (ct.to_string(), false));
+@@ -142,25 +143,39 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) -> RibbonOutput<String> {
+         .collect();
  
-+    /// Fonts were added at run time ([`Self::font_requests`]): list them and lay the document out
-+    /// again with them.
+     let track = app.session.doc.settings.track_changes;
+-    let editing_label = if track { tl!("Reviewing") } else { tl!("Editing") };
++    let viewing = app.session.viewing;
++    // The mode switch: Editing, Reviewing (Track Changes) or Viewing (no changes).
++    let (mode_icon, editing_label) = if viewing {
++        ("readMode", tl!("Viewing"))
++    } else if track {
++        ("trackChanges", tl!("Reviewing"))
++    } else {
++        ("wordcraft.pencil", tl!("Editing"))
++    };
+     let modes = [
+-        Entry::new(CommandRef::with_params("review.trackChanges", json!({"value": false})), tl!("Editing — edit the document directly").to_string())
+-            .checked(!track),
+-        Entry::new(CommandRef::with_params("review.trackChanges", json!({"value": true})), tl!("Reviewing — edits become suggestions").to_string())
+-            .checked(track),
+-    ];
+-    let ends = [
+-        // The strip lays these out start to end, so Share, the old strip's outermost button, comes last. Comments and
+-        // Editing are plain (ghost) buttons, as in v0.18.1; Share is a filled accent button.
+-        StripEnd::command(tl!("Comments").to_string(), IconSpec::svg(IconId::new("comment")), CommandRef::new("view.commentsPane")),
+-        StripEnd::menu(editing_label.to_string(), IconSpec::svg(IconId::new("wordcraft.pencil")), &modes),
+-        StripEnd::command(
+-            tl!("Share").to_string(),
+-            IconSpec::svg(IconId::new("share")),
+-            CommandRef::with_params("ui.backstage", json!({"value": true, "page": "export"})),
+-        )
+-        .variant(Variant::PRIMARY),
++        Entry::new(CommandRef::with_params("ui.mode", json!({"mode": "editing"})), tl!("Editing: edit the document directly").to_string())
++            .checked(!track && !viewing),
++        Entry::new(CommandRef::with_params("ui.mode", json!({"mode": "reviewing"})), tl!("Reviewing: edits become suggestions").to_string())
++            .checked(track && !viewing),
++        Entry::new(CommandRef::with_params("ui.mode", json!({"mode": "viewing"})), tl!("Viewing: read or print, no changes").to_string()).checked(viewing),
+     ];
++    // Share goes to the host page when it keeps sharing (`file.share` then asks it).
++    let share = if app.embed.host_share { CommandRef::new("file.share") } else { CommandRef::with_params("ui.backstage", json!({"value": true, "page": "export"})) };
++    let mut ends = Vec::new();
++    // The strip lays these out start to end, so Share, the old strip's outermost button, comes last. Comments and
++    // Editing are plain (ghost) buttons, as in v0.18.1; Share is a filled accent button. A host page may leave each out.
++    if !app.embed.hide_comments_button {
++        ends.push(StripEnd::command(tl!("Comments").to_string(), IconSpec::svg(IconId::new("comment")), CommandRef::new("view.commentsPane")));
++    }
++    if app.embed.ai_button {
++        ends.push(StripEnd::command(tl!("AI").to_string(), IconSpec::svg(IconId::new("wordcraft.aiSparkle")), CommandRef::new("ui.ai")));
++    }
++    if !app.embed.hide_mode_switch {
++        ends.push(StripEnd::menu(editing_label.to_string(), IconSpec::svg(IconId::new(mode_icon)), &modes));
++    }
++    if !app.embed.hide_share {
++        ends.push(StripEnd::command(tl!("Share").to_string(), IconSpec::svg(IconId::new("share")), share).variant(Variant::PRIMARY));
++    }
+     // The context menu's body captures these, never `app`, which the row body borrows.
+     let qat: Vec<String> = app.session.ribbon.qat().into_iter().map(str::to_string).collect();
+     let qat_shown = app.ui.quick_access_toolbar;
+diff --git a/crates/ui-egui/src/widgets/font_box.rs b/crates/ui-egui/src/widgets/font_box.rs
+index d4c1b6c3..46c04431 100644
+--- a/crates/ui-egui/src/widgets/font_box.rs
++++ b/crates/ui-egui/src/widgets/font_box.rs
+@@ -82,14 +82,35 @@ pub fn font_box(ui: &mut Ui, app: &mut WordApp, label: impl Into<Label>, family:
+     let rows = actions();
+     let catalog = Catalog::global();
+     // PLAN: assumed `UiState::font_picker: FontPickerSettings`, replacing `recent_fonts` (app-hub).
+-    let out = font_picker(label, Bind::bound(family), catalog, Bind::bound(&mut app.ui.font_picker), &rows, warning.as_deref()).show(ui);
++    // Web fonts a host page can fetch on demand, listed until they are loaded ([`crate::embed::Embed::cloud_fonts`]).
++    let db = wordcraft_fonts::FontDb::global();
++    let served: Vec<String> = app.embed.cloud_fonts.iter().filter(|f| !db.has_family(f)).cloned().collect();
++    let out = font_picker(label, Bind::bound(family), catalog, Bind::bound(&mut app.ui.font_picker), &rows, warning.as_deref()).served(&served).show(ui);
+     if let Some(command) = out.action.and_then(action_command) {
+         let _ = app.run(command, json!({}));
+     }
++    // A served family picked: the host fetches every face; one rested on: its regular face, to draw its row.
++    if let Some(f) = out.picked.as_ref().filter(|f| served.contains(f))
++        && !app.embed.font_requests.contains(f)
++    {
++        app.embed.font_requests.push(f.clone());
++    }
++    if let Some(f) = out.rested.as_ref().filter(|f| served.contains(f))
++        && !app.embed.font_previews.contains(f)
++    {
++        app.embed.font_previews.push(f.clone());
++    }
+     out
+ }
+ 
+ impl WordApp {
++    /// Fonts a host page fetched arrived ([`crate::embed::Embed::font_requests`]): list them and
++    /// lay the document out again with them.
 +    pub fn fonts_changed(&mut self) {
-+        self.previews.invalidate_families();
++        self.previews.fonts_changed();
 +        self.session.relayout();
 +    }
 +
-+    /// The font box picked `family`: remember it (Word's "Recently Used Fonts", ten at most) and
-+    /// ask the host for it if it isn't installed.
-+    pub fn font_picked(&mut self, family: &str) {
-+        self.ui.recent_fonts.retain(|f| f != family);
-+        self.ui.recent_fonts.insert(0, family.to_string());
-+        self.ui.recent_fonts.truncate(10);
-+        if !wordcraft_fonts::FontDb::global().has_family(family)
-+            && self.cloud_fonts.iter().any(|f| f == family)
-+            && !self.font_requests.iter().any(|f| f == family)
-+        {
-+            self.font_requests.push(family.to_string());
-+        }
-+    }
-+
-+    /// The font box's list: theme fonts, recently used, then all (installed and on demand), each
-+    /// section under a heading, as in Word.
-+    pub fn font_box_items(&mut self) -> Vec<String> {
-+        use crate::widgets::SECTION;
-+        let mut all = self.previews.families();
-+        all.extend(self.cloud_fonts.iter().cloned());
-+        all.sort_by_key(|a| a.to_lowercase());
-+        all.dedup();
-+        let mut out = vec![format!("{SECTION}{}", tl!("Theme Fonts"))];
-+        out.push(wordcraft_doc::styles::HEADING_FONT.to_string());
-+        out.push(wordcraft_doc::styles::BODY_FONT.to_string());
-+        if !self.ui.recent_fonts.is_empty() {
-+            out.push(format!("{SECTION}{}", tl!("Recently Used Fonts")));
-+            out.extend(self.ui.recent_fonts.iter().cloned());
-+        }
-+        out.push(format!("{SECTION}{}", tl!("All Fonts")));
-+        out.extend(all);
-+        out
-+    }
-+
-+    /// Whether the host offers ribbon tab `tab`.
-+    pub fn tab_shown(&self, tab: &str) -> bool {
-+        !self.ui.hidden_tabs.iter().any(|t| t.eq_ignore_ascii_case(tab))
-+    }
-+
-     /// Let AutoSave write to `path`, as if the user had saved there in this session (`None` stops
-     /// it). For hosts that keep documents themselves, such as a web page embedding WordCraft: on
-     /// the web AutoSave then hands each save to `Services::download`, which the host handles.
-@@ -2037,6 +2118,9 @@ impl WordApp {
-         if self.session.view.focus_mode && self.dialog.is_none() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-             let _ = self.run("view.focus", json!({"value": false}));
-         }
-+        if self.ui.backstage && !self.tab_shown("File") {
-+            self.ui.backstage = false;
-+        }
-         if self.ui.backstage {
-             backstage::show(self, ui);
-         } else if !self.has_document() {
-diff --git a/crates/ui-egui/src/panes.rs b/crates/ui-egui/src/panes.rs
-index 76d5892..484d5ec 100644
---- a/crates/ui-egui/src/panes.rs
-+++ b/crates/ui-egui/src/panes.rs
-@@ -362,7 +362,7 @@ fn comments(app: &mut WordApp, ui: &mut Ui) {
-         for c in list.as_array().cloned().unwrap_or_default() {
-             let id = c.get("id").and_then(Value::as_u64).unwrap_or(0);
-             let reply = c.get("parent").is_some_and(|p| !p.is_null());
--            egui::Frame::NONE.fill(t.input).stroke(Stroke::new(1.0, t.border)).corner_radius(6).inner_margin(8).show(ui, |ui| {
-+            let card = egui::Frame::NONE.fill(t.input).stroke(Stroke::new(1.0, t.border)).corner_radius(6).inner_margin(8).show(ui, |ui| {
-                 ui.set_width(ui.available_width());
-                 if reply {
-                     ui.add_space(0.0);
-@@ -404,6 +404,14 @@ fn comments(app: &mut WordApp, ui: &mut Ui) {
-                     }
-                 }
-             });
-+            // Clicking a comment (outside its buttons and text) goes to the text it's about, as in Word.
-+            if card.response.interact(egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
-+                && let Some(a) = c.get("anchor").filter(|a| !a.is_null())
-+            {
-+                let _ = app.run("caret.set", json!({"pos": a}));
-+                app.canvas.scroll_to_caret = true;
-+                app.canvas.want_focus = true;
-+            }
-             ui.add_space(6.0);
-         }
-     });
-diff --git a/crates/ui-egui/src/previews.rs b/crates/ui-egui/src/previews.rs
-index cb94684..08ef7cb 100644
---- a/crates/ui-egui/src/previews.rs
-+++ b/crates/ui-egui/src/previews.rs
-@@ -153,6 +153,11 @@ impl MathAtlas {
- }
- 
- impl Previews {
-+    /// Forget the cached family list (fonts were added).
-+    pub fn invalidate_families(&mut self) {
-+        self.families = None;
-+    }
-+
-     /// The font list: installed families, each by its name in the interface language when it has
-     /// one (宋体 for SimSun in Chinese, #505), like Word's.
-     pub fn families(&mut self) -> Vec<String> {
-diff --git a/crates/ui-egui/src/ribbon.rs b/crates/ui-egui/src/ribbon.rs
-index 0dd3889..97c7ee3 100644
---- a/crates/ui-egui/src/ribbon.rs
-+++ b/crates/ui-egui/src/ribbon.rs
-@@ -197,7 +197,8 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
-     // Format) may be stored while the selection moved away, and a tab may have been hidden.
-     let user_tabs = app.session.ribbon.tabs().into_owned();
-     let mut tabs: Vec<(String, bool)> = vec![("File".to_string(), false)];
--    tabs.extend(user_tabs.iter().filter(|e| !e.hidden).map(|e| (e.name.clone(), e.custom)));
-+    // The host may leave tabs out (`hidden_tabs`).
-+    tabs.extend(user_tabs.iter().filter(|e| !e.hidden && app.tab_shown(&e.name)).map(|e| (e.name.clone(), e.custom)));
-     for ct in contextual_tabs(&app.session) {
-         if ct == "Outlining" {
-             tabs.insert(1.min(tabs.len()), (ct.to_string(), false));
-@@ -243,17 +244,27 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
-                         let _ = app.run("ui.backstage", json!({"value": true, "page": "export"}));
-                     }
-                     ui.add_space(6.0);
-+                    // Word's mode switch: Editing, Reviewing (Track Changes) or Viewing.
-                     let track = app.session.doc.settings.track_changes;
--                    let mode =
--                        crate::widgets::icon_text_menu_button(ui, "pencil", if track { tl!("Reviewing") } else { tl!("Editing") }, regular(12.0));
-+                    let (icon, label) = if app.session.viewing {
-+                        ("readMode", tl!("Viewing"))
-+                    } else if track {
-+                        ("trackChanges", tl!("Reviewing"))
-+                    } else {
-+                        ("pencil", tl!("Editing"))
-+                    };
-+                    let mode = crate::widgets::icon_text_menu_button(ui, icon, label, regular(12.0));
-                     egui::Popup::menu(&mode).show(|ui| {
--                        if ui.selectable_label(!track, tl!(tl!("Editing — edit the document directly"))).clicked() {
--                            let _ = app.run("review.trackChanges", json!({"value": false}));
--                            ui.close();
--                        }
--                        if ui.selectable_label(track, tl!(tl!("Reviewing — edits become suggestions"))).clicked() {
--                            let _ = app.run("review.trackChanges", json!({"value": true}));
--                            ui.close();
-+                        let choices = [
-+                            ("editing", tl!("Editing — edit the document directly"), !track && !app.session.viewing),
-+                            ("reviewing", tl!("Reviewing — edits become suggestions"), track && !app.session.viewing),
-+                            ("viewing", tl!("Viewing — read or print, no changes"), app.session.viewing),
-+                        ];
-+                        for (mode, text, on) in choices {
-+                            if crate::widgets::enabled(app, "ui.mode") && ui.selectable_label(on, text).clicked() {
-+                                let _ = app.run("ui.mode", json!({"mode": mode}));
-+                                ui.close();
-+                            }
-                         }
-                     });
-                     ui.add_space(4.0);
-@@ -762,7 +773,7 @@ fn home(app: &mut WordApp, ui: &mut Ui) {
-             crate::widgets::row(ui, |ui| {
-                 let font = st.get("font").and_then(Value::as_str).unwrap_or("").to_string();
-                 let font = app.previews.font_shown(&font);
--                let fams = app.previews.families();
-+                let fams = app.font_box_items();
-                 let prev = app.previews.font_preview_fn();
-                 if let Some(f) = font_combo(ui, "font", 150.0, &font, &fams, Some(&*prev)) {
-                     let _ = if f == crate::widgets::ADD_FONT {
-@@ -771,7 +782,11 @@ fn home(app: &mut WordApp, ui: &mut Ui) {
-                         app.run("font.loadSystem", json!({}))
-                     } else {
-                         let f = app.previews.font_stored(&f);
--                        app.run("format.font", json!({"name": f}))
-+                        let r = app.run("format.font", json!({"name": f}));
-+                        if r.is_ok() {
-+                            app.font_picked(&f);
-+                        }
-+                        r
-                     };
-                 }
-                 let size = st
-diff --git a/crates/ui-egui/src/widgets.rs b/crates/ui-egui/src/widgets.rs
-index a10495b..b790d4c 100644
---- a/crates/ui-egui/src/widgets.rs
-+++ b/crates/ui-egui/src/widgets.rs
-@@ -95,7 +95,8 @@ pub fn enabled(app: &WordApp, id: &str) -> bool {
-         return false;
-     }
-     match app.session.registry.get(id) {
--        Some(s) => (s.enabled)(&app.session).is_none(),
-+        Some(s) => (s.enabled)(&app.session).is_none() && app.session.host_block(id, s.mutates).is_none(),
-+        None if app.session.host_block(id, false).is_some() => false,
-         // Zotero: one command at a time, and only in the desktop app.
-         None if id.starts_with("ui.zotero.") => app.zotero.busy.is_none() && !cfg!(target_arch = "wasm32"),
-         None if id == "ui.linkTextBox" => enabled(app, "shape.link"),
-@@ -519,6 +520,9 @@ pub fn font_combo(
-     combo_impl(ui, id, width, current, items, preview, true)
- }
- 
-+/// Marks an item of a combo list as a section heading (drawn as a heading, never picked).
-+pub const SECTION: char = '\u{1}';
-+
- /// Indices of the `items` matching `query`, ignoring case: exact matches, then the names starting
- /// with it, then those containing it, each group in list order. A blank query matches everything.
- pub fn font_matches(query: &str, items: &[String]) -> Vec<usize> {
-@@ -526,8 +530,13 @@ pub fn font_matches(query: &str, items: &[String]) -> Vec<usize> {
-     if q.is_empty() {
-         return (0..items.len()).collect();
-     }
-+    let mut seen = std::collections::HashSet::new();
-     let (mut exact, mut prefix, mut inner) = (Vec::new(), Vec::new(), Vec::new());
-     for (i, it) in items.iter().enumerate() {
-+        // Headings never match, and a name listed in two sections matches once.
-+        if it.starts_with(SECTION) || !seen.insert(it.as_str()) {
-+            continue;
-+        }
-         let name = it.to_lowercase();
-         if name == q {
-             exact.push(i);
-@@ -631,7 +640,7 @@ fn combo_impl(
-             if enter {
-                 let picked = s.matches.get(s.highlight).and_then(|&i| items.get(i));
-                 out = Some(match picked {
--                    Some(name) if !text.trim().is_empty() => name.clone(),
-+                    Some(name) if !text.trim().is_empty() && !name.starts_with(SECTION) => name.clone(),
-                     _ => text.clone(),
-                 });
-                 s.open = false;
-@@ -761,6 +770,14 @@ fn list_rows<'a>(
-         ui.set_min_width(width + 60.0);
-         for k in range {
-             let Some(it) = item(k) else { continue };
-+            // A section heading ("Recently Used Fonts"), not a choice.
-+            if let Some(heading) = it.strip_prefix(SECTION) {
-+                let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::hover());
-+                let t = Tokens::get(ui.ctx());
-+                ui.painter().rect_filled(r, 0.0, t.tab_strip);
-+                ui.painter().text(pos2(r.min.x + 6.0, r.center().y), Align2::LEFT_CENTER, heading, crate::theme::semibold(11.0), t.text_dim);
-+                continue;
-+            }
-             let lit = highlight == Some(k);
-             let clicked = match preview {
-                 Some(p) => {
+     /// The font catalog every font box lists: the process's one catalog.
+     pub(crate) fn font_catalog(&self) -> Arc<Catalog> {
+         Arc::clone(Catalog::global())

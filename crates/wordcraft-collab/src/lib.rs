@@ -153,7 +153,8 @@ impl Collab {
     /// Not undoable.
     pub fn seed(&mut self, doc: &Document) {
         let mut txn = self.ydoc.transact_mut_with(ORIGIN_SEED);
-        let empty = Document { body: Vec::new(), ..Document::new() };
+        let mut empty = Document::new();
+        empty.body = Vec::new();
         write_document(&mut txn, &self.roots, &empty, doc);
         self.roots.meta.insert(&mut txn, "schema", Any::from(SCHEMA as f64));
         drop(txn);

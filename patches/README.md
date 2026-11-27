@@ -7,14 +7,17 @@ upstream as-is. When upstream accepts one, delete it here.
 
 | Patch | Why |
 |---|---|
-| 0001 | AutoSave on the web when the host keeps documents (upstream greys it out in the browser), and hiding the title bar and the ribbon |
-| 0002 | Real-time co-editing: Undo and Redo can be handed to the host (so they take back only your own changes), and the title bar shows who else is editing |
-| 0003 | Host controls: which ribbon tabs show, Word's Viewing mode, commands the host turns off, Theme / Recently Used / All Fonts sections and on-demand web fonts in the font box, and clicking a comment to go to its text |
-| 0004 | An AI (sparkle) button beside Comments for hosts that offer AI, and Word's ribbon collapse: the ^ button, and a collapsed ribbon that opens over the page when a tab is clicked, with a pin |
-| 0005 | Windows-style inline tools (Bullets, Numbering and New Comment on the mini toolbar, and the toolbar above the context menu), rulers that follow the page in view and open Page Setup on a double-click, font-box previews for web fonts, and Version History's entry points (the title, which reads "Name • Saved", and File › Info) |
-| 0006 | Hiding the status bar, so a host can draw its own phone interface (the package's mobile layout) around the page |
-| 0007 | Custom theme colours for Design › Colors (`design.themeColors` with `colors`, written to `word/theme/theme1.xml`), and editing the first page's or even pages' header and footer (`insert.editHeader` and `insert.editFooter` with `kind`), for the brand theme and logo placement |
-| 0008 | The host owns more of the screen: comments (New Comment asks the host to compose, no empty comment, the pane never opens, balloon clicks go to the host), Share, the File menu item by item (hide, rename, disable with a reason, host actions, sections, each export format), and switches for the context menu, rulers, Navigation pane, presence, Share, the mode switch, the Comments button, zoom and the page-view buttons |
+| 0001 | An `Embed` struct on `WordApp` for what a host page turns off or takes over, kept apart from the saved preferences; the shell hides the title bar, ribbon and status bar by it; the File page goes when the host hides its tab; AutoSave runs through a host that keeps documents (upstream greys it out in the browser) |
+| 0002 | Real-time co-editing: Undo and Redo can be handed to the host (so they take back only your own changes), and the title bar shows who else is editing, in their caret colours |
+| 0003 | Host controls: commands the host turns off and Viewing mode (refused everywhere and greyed out), the Editing / Reviewing / Viewing switch (`ui.mode`), hidden ribbon tabs, web fonts the host can fetch listed in the font box (and asked for when picked or rested on), and an AI button beside Comments |
+| 0004 | Version History's entry points for a host that keeps versions: the title and File › Info |
+| 0005 | Custom theme colours for Design › Colors (`design.themeColors` with `colors`), and the first page's or even pages' header and footer by `kind` (`insert.editHeader`, `insert.editFooter`), for the brand theme and logo placement |
+| 0006 | The host owns more of the screen: comments (New Comment asks the host to compose, no empty comment, the pane never opens, balloon clicks go to the host), Share, the File menu item by item (hide, rename, disable with a reason, host actions, sections, each export format), and switches for the context menu, rulers, Navigation pane, zoom and the page-view buttons |
+
+Upstream 0.18 (November 2026) rebuilt its window on the Craft shell and its saving on a host
+files layer, so the series was ported rather than rebased then. Upstream's own ribbon collapse,
+Recently Used Fonts and comment navigation replaced ours; the older mini toolbar and ruler tweaks
+were dropped.
 
 The patches were made against the upstream commit in `BASE`. Every sync rebases them onto the new
 upstream with a three-way merge and refreshes them, so they only need a person when both sides

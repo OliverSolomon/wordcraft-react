@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliver Solomon <47696354+OliverSolomon@users.noreply.github.com>
+Date: Fri, 27 Nov 2026 08:42:27 +0000
+Subject: [PATCH 4/6] Version History hooks: the title and File > Info ask a
+ host page that keeps versions
+
+---
+ crates/ui-egui/src/backstage/pages.rs  | 13 +++++++++++++
+ crates/ui-egui/src/chrome/title_bar.rs | 11 ++++++++---
+ 2 files changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/crates/ui-egui/src/backstage/pages.rs b/crates/ui-egui/src/backstage/pages.rs
+index 03054f81..a86d8e16 100644
+--- a/crates/ui-egui/src/backstage/pages.rs
++++ b/crates/ui-egui/src/backstage/pages.rs
+@@ -92,6 +92,9 @@ pub(super) fn info(ui: &mut Ui, app: &mut WordApp) {
+         let _ = Stack::new().fill_width().gap(Gap::Section).show(ui, |ui, _| {
+             let _ = Stack::new().fill_width().gap(Gap::Tight).show(ui, |ui, _| properties(ui, app, &info));
+             let _ = Stack::new().fill_width().gap(Gap::Tight).show(ui, |ui, _| protect(ui, app, &info));
++            if app.embed.host_versions {
++                let _ = Stack::new().fill_width().gap(Gap::Tight).show(ui, |ui, _| versions(ui, app));
++            }
+         });
+         let _ = Stack::new().fill_width().gap(Gap::Tight).show(ui, |ui, _| statistics(ui, &info));
+     });
+@@ -172,6 +175,16 @@ fn protect(ui: &mut Ui, app: &mut WordApp, info: &serde_json::Value) {
+     });
+ }
+ 
++/// Version History, when a host page keeps the versions: the button asks it to show them.
++fn versions(ui: &mut Ui, app: &mut WordApp) {
++    subheading(ui, "Version History");
++    let _ = Text::new(label("See earlier versions of this document, and restore one.")).show(ui);
++    if clicked(&Button::new(label("View Version History")).id_salt("info-versions").show(ui)) {
++        app.embed.event("versions");
++        app.ui.backstage = false;
++    }
++}
++
+ /// The document's counts and its location.
+ fn statistics(ui: &mut Ui, info: &serde_json::Value) {
+     subheading(ui, "Statistics");
+diff --git a/crates/ui-egui/src/chrome/title_bar.rs b/crates/ui-egui/src/chrome/title_bar.rs
+index 63059da5..dd442167 100644
+--- a/crates/ui-egui/src/chrome/title_bar.rs
++++ b/crates/ui-egui/src/chrome/title_bar.rs
+@@ -39,8 +39,9 @@ pub(crate) fn show(ui: &mut Ui, _cx: &mut BodyCx<'_>, app: &mut WordApp) {
+         } else {
+             tl!("Not saved")
+         };
+-        Title::new(format!("{} — {state}", craft::i18n::file_name(&app.title_stem(), super::interface_direction())))
+-            .action(tl!("Rename Document").to_string())
++        // With a host page keeping the versions, the title opens Version History.
++        let action = if app.embed.host_versions { tl!("Version History") } else { tl!("Rename Document") };
++        Title::new(format!("{} — {state}", craft::i18n::file_name(&app.title_stem(), super::interface_direction()))).action(action.to_string())
+     } else {
+         // No document open (#1129): the app's name alone.
+         Title::new("WordCraft")
+@@ -79,7 +80,11 @@ pub(crate) fn show(ui: &mut Ui, _cx: &mut BodyCx<'_>, app: &mut WordApp) {
+     if out.title_activated
+         && let Ok(mut a) = app.try_borrow_mut()
+     {
+-        let _ = a.run("file.rename", json!({}));
++        if a.embed.host_versions {
++            a.embed.event("versions");
++        } else {
++            let _ = a.run("file.rename", json!({}));
++        }
+     }
+     if out.close_requested {
+         // The bar never closes the window: the close goes to the OS as its own close button's does, so it passes

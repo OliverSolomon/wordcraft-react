@@ -80,7 +80,7 @@ impl TouchState {
             )
         });
         if self.pending_scroll != Vec2::ZERO
-            && let Some(area) = app.canvas.canvas_rect
+            && let Some(area) = app.canvas.canvas_rect()
         {
             raw.events.push(Event::PointerMoved(area.center()));
             raw.events.extend(wheel_events(std::mem::take(&mut self.pending_scroll)));
@@ -97,7 +97,7 @@ impl TouchState {
             self.show_handles = false;
             self.selected = false;
         }
-        let canvas = app.canvas.canvas_rect;
+        let canvas = app.canvas.canvas_rect();
         let handles = self.handles;
         let owner = |p: Pos2| -> Owner {
             if let Some(i) = handles.iter().position(|h| h.is_some_and(|r| r.contains(p))) {
@@ -175,9 +175,9 @@ impl TouchState {
         if !self.on || !self.show_handles || s.anchor == s.focus {
             return;
         }
-        let Some(clip) = app.canvas.canvas_rect else { return };
+        let Some(clip) = app.canvas.canvas_rect() else { return };
         let color = wordcraft_ui_egui::theme::Tokens::get(ctx).accent;
-        let painter = ctx.layer_painter(LayerId::new(Order::Foreground, egui::Id::new("wordcraft-touch-handles"))).with_clip_rect(clip);
+        let painter = ctx.layer_painter(LayerId::new(Order::Foreground, egui::Id::unique("wordcraft-touch-handles"))).with_clip_rect(clip);
         let (start, end) = ordered(app);
         let layout = app.session.layout();
         let hint = app.session.page_hint;
@@ -208,7 +208,7 @@ impl TouchState {
     pub fn info(&self, app: &mut WordApp, screen: Option<Rect>, extra: &Value) -> Value {
         let (start, end) = ordered(app);
         let collapsed = start == end;
-        let canvas = app.canvas.canvas_rect;
+        let canvas = app.canvas.canvas_rect();
         let mut rect: Option<Rect> = None;
         if collapsed {
             if let Some((p, h)) = caret_screen(app) {

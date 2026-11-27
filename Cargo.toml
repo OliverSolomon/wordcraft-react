@@ -27,4 +27,26 @@ debug = 0
 
 # Upstream WordCraft's [patch.crates-io], copied by scripts/sync-upstream.py.
 [patch.crates-io]
-krilla = { git = "https://github.com/storytold/craft-libs", rev = "c3487320b2d1de657b860b3c8abb44e1f2b32bd8" }
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "0b8bbaf4c842da2d47de7b3fddd7170ba6115541" }
+hayro = { git = "https://github.com/storytold/craft-libs", rev = "0b8bbaf4c842da2d47de7b3fddd7170ba6115541" }
+hayro-interpret = { git = "https://github.com/storytold/craft-libs", rev = "0b8bbaf4c842da2d47de7b3fddd7170ba6115541" }
+hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "0b8bbaf4c842da2d47de7b3fddd7170ba6115541" }
+hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "0b8bbaf4c842da2d47de7b3fddd7170ba6115541" }
+hayro-cmap = { git = "https://github.com/storytold/craft-libs", rev = "0b8bbaf4c842da2d47de7b3fddd7170ba6115541" }
+hayro-postscript = { git = "https://github.com/storytold/craft-libs", rev = "0b8bbaf4c842da2d47de7b3fddd7170ba6115541" }
+linesweeper = { git = "https://github.com/storytold/craft-libs", rev = "0b8bbaf4c842da2d47de7b3fddd7170ba6115541" }
+ecolor = { git = "https://github.com/storytold/egui.git", rev = "b9770908e0f304896f9658d239a7b29cf8af1564" }
+emath = { git = "https://github.com/storytold/egui.git", rev = "b9770908e0f304896f9658d239a7b29cf8af1564" }
+epaint = { git = "https://github.com/storytold/egui.git", rev = "b9770908e0f304896f9658d239a7b29cf8af1564" }
+epaint_default_fonts = { git = "https://github.com/storytold/egui.git", rev = "b9770908e0f304896f9658d239a7b29cf8af1564" }
+egui = { git = "https://github.com/storytold/egui.git", rev = "b9770908e0f304896f9658d239a7b29cf8af1564" }
+egui-winit = { git = "https://github.com/storytold/egui.git", rev = "b9770908e0f304896f9658d239a7b29cf8af1564" }
+egui-wgpu = { git = "https://github.com/storytold/egui.git", rev = "b9770908e0f304896f9658d239a7b29cf8af1564" }
+egui_glow = { git = "https://github.com/storytold/egui.git", rev = "b9770908e0f304896f9658d239a7b29cf8af1564" }
+egui_extras = { git = "https://github.com/storytold/egui.git", rev = "b9770908e0f304896f9658d239a7b29cf8af1564" }
+egui_kittest = { git = "https://github.com/storytold/egui.git", rev = "b9770908e0f304896f9658d239a7b29cf8af1564" }
+egui_system_font_provider = { git = "https://github.com/storytold/egui.git", rev = "b9770908e0f304896f9658d239a7b29cf8af1564" }
+eframe = { git = "https://github.com/storytold/egui.git", rev = "b9770908e0f304896f9658d239a7b29cf8af1564" }
+egui_demo_lib = { git = "https://github.com/storytold/egui.git", rev = "b9770908e0f304896f9658d239a7b29cf8af1564" }
+egui_inspection = { git = "https://github.com/storytold/egui.git", rev = "b9770908e0f304896f9658d239a7b29cf8af1564" }
+winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }

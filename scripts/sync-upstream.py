@@ -8,7 +8,7 @@ What it does:
      merge (scripts/prepare-upstream.sh), refreshing them; exits non-zero on a real conflict.
   2. Copies upstream's Cargo.lock, so every shared crate (egui, wgpu, skrifa, ...) resolves to
      exactly the version upstream ships, then lets cargo add only our own entries.
-  3. Re-pins egui / eframe / rfd / wasm-bindgen in crates/wordcraft-embed to upstream's versions.
+  3. Re-pins egui / eframe / wasm-bindgen and the craft-libs rev in crates/wordcraft-embed to upstream's.
 
 Exits 0 with "unchanged" when already at the target. In GitHub Actions it writes
 `changed`, `old` and `new` to $GITHUB_OUTPUT.
@@ -80,11 +80,14 @@ def main() -> int:
     pins = {
         "egui": workspace_dep_version(up_toml, "egui"),
         "eframe": workspace_dep_version(up_toml, "eframe"),
-        "rfd": workspace_dep_version(up_toml, "rfd"),
     }
     for name, ver in pins.items():
         if ver:
             embed = re.sub(r'^(' + name + r'\s*=\s*(?:\{\s*version\s*=\s*)?")[^"]+(")', r'\g<1>' + ver + r'\g<2>', embed, count=1, flags=re.M)
+    # the Craft libraries at upstream's rev
+    craft = re.search(r'^craft\s*=\s*\{[^}]*rev\s*=\s*"([0-9a-f]+)"', up_toml, re.M)
+    if craft:
+        embed = re.sub(r'^(craft\s*=\s*\{[^}]*rev\s*=\s*")[0-9a-f]+(")', r'\g<1>' + craft.group(1) + r'\g<2>', embed, count=1, flags=re.M)
     wbg = lock_version(up_lock, "wasm-bindgen")
     if wbg:
         embed = re.sub(r'^(wasm-bindgen\s*=\s*"=)[^"]+(")', r'\g<1>' + wbg + r'\g<2>', embed, count=1, flags=re.M)
